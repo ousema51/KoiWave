@@ -1,7 +1,6 @@
 import os
 from datetime import datetime, timedelta, timezone
 
-import bcrypt
 import jwt
 from bson import ObjectId
 from flask import Blueprint, g, jsonify, request
@@ -26,6 +25,7 @@ def _make_token(user_id, username):
 def _user_to_dict(user):
     user = dict(user)
     user["_id"] = str(user["_id"])
+    user.pop("password", None)
     user.pop("password_hash", None)
     for key, value in user.items():
         if isinstance(value, datetime):
@@ -48,12 +48,11 @@ def register():
     if db.users.find_one({"username": username}):
         return jsonify({"success": False, "message": "Username already taken"}), 400
 
-    password_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     now = datetime.now(tz=timezone.utc)
     result = db.users.insert_one(
         {
             "username": username,
-            "password_hash": password_hash,
+            "password": password,
             "display_name": display_name,
             "profile_picture_url": None,
             "created_at": now,
@@ -82,7 +81,9 @@ def login():
     if not user:
         return jsonify({"success": False, "message": "Invalid credentials"}), 401
 
-    if not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
+    # Simple plain-text password comparison
+    stored_password = user.get("password") or user.get("password_hash", "")
+    if password != stored_password:
         return jsonify({"success": False, "message": "Invalid credentials"}), 401
 
     now = datetime.now(tz=timezone.utc)

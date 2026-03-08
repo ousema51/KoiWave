@@ -4,11 +4,8 @@ import os
 # Make the backend root importable when running from api/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+from dotenv import load_dotenv
+load_dotenv()
 
 from flask import Flask, jsonify
 from flask_cors import CORS
@@ -79,7 +76,7 @@ def handle_exception(e):
     import traceback
     print(f"[UNHANDLED ERROR] {e}", flush=True)
     traceback.print_exc()
-    return jsonify({"success": False, "message": f"Unexpected error: {str(e)}"}), 500
+    return jsonify({"success": False, "message": f"Server error: {str(e)}"}), 500
 
 
 if __name__ == "__main__":
