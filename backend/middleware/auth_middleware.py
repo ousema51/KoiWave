@@ -40,6 +40,7 @@ def token_required(f):
 
         user_dict = dict(user)
         user_dict["_id"] = str(user_dict["_id"])
+        user_dict.pop("password", None)
         user_dict.pop("password_hash", None)
         for key, value in user_dict.items():
             if isinstance(value, datetime):
