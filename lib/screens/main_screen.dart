@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import '../models/song.dart';
-import '../services/auth_service.dart';
 import '../widgets/mini_player.dart';
 import '../widgets/full_player.dart';
 import 'home_screen.dart';
@@ -18,7 +17,6 @@ class _MainScreenState extends State<MainScreen> {
   int _selectedIndex = 0;
   bool _isFullPlayer = false;
   Song? _currentSong;
-  final AuthService _authService = AuthService();
 
   void _onSongSelected(Song song) {
     setState(() => _currentSong = song);
@@ -26,13 +24,6 @@ class _MainScreenState extends State<MainScreen> {
 
   void _toggleFullPlayer() {
     setState(() => _isFullPlayer = !_isFullPlayer);
-  }
-
-  Future<void> _logout() async {
-    await _authService.logout();
-    if (mounted) {
-      Navigator.pushReplacementNamed(context, '/login');
-    }
   }
 
   @override
@@ -50,27 +41,6 @@ class _MainScreenState extends State<MainScreen> {
               ? AppBar(
                   backgroundColor: const Color(0xFF121212),
                   elevation: 0,
-                  actions: [
-                    FutureBuilder<bool>(
-                      future: _authService.isLoggedIn(),
-                      builder: (context, snapshot) {
-                        if (snapshot.data == true) {
-                          return IconButton(
-                            icon: const Icon(Icons.logout_rounded,
-                                color: Colors.white),
-                            tooltip: 'Logout',
-                            onPressed: _logout,
-                          );
-                        }
-                        return TextButton(
-                          onPressed: () =>
-                              Navigator.pushNamed(context, '/login'),
-                          child: const Text('Log In',
-                              style: TextStyle(color: Color(0xFF1DB954))),
-                        );
-                      },
-                    ),
-                  ],
                 )
               : null,
           body: Column(

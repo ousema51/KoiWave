@@ -1,7 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
-import '../services/auth_service.dart';
 import '../widgets/song_tile.dart';
 
 class LibraryScreen extends StatefulWidget {
@@ -15,11 +15,9 @@ class LibraryScreen extends StatefulWidget {
 
 class _LibraryScreenState extends State<LibraryScreen> {
   final MusicService _musicService = MusicService();
-  final AuthService _authService = AuthService();
   List<Song> _likedSongs = [];
   List<String> _playlists = [];
   bool _isLoading = true;
-  bool _isLoggedIn = false;
 
   @override
   void initState() {
@@ -29,21 +27,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
 
   Future<void> _loadData() async {
     setState(() => _isLoading = true);
-    _isLoggedIn = await _authService.isLoggedIn();
-
-    if (_isLoggedIn) {
-      try {
-        final likedSongs = await _musicService.getLikedSongs();
-        if (mounted) {
-          setState(() {
-            _likedSongs = likedSongs;
-            _isLoading = false;
-          });
-        }
-      } catch (e) {
-        if (mounted) setState(() => _isLoading = false);
+    try {
+      final likedSongs = await _musicService.getLikedSongs();
+      if (mounted) {
+        setState(() {
+          _likedSongs = likedSongs;
+          _isLoading = false;
+        });
       }
-    } else {
+    } catch (e) {
+      debugPrint('[LibraryScreen] Failed to load liked songs: $e');
       if (mounted) setState(() => _isLoading = false);
     }
   }
@@ -110,11 +103,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                   style: TextStyle(
                       fontSize: 26, fontWeight: FontWeight.bold),
                 ),
-                if (_isLoggedIn)
-                  IconButton(
-                    icon: const Icon(Icons.add_rounded, size: 28),
-                    onPressed: _showAddPlaylistDialog,
-                  ),
+                IconButton(
+                  icon: const Icon(Icons.add_rounded, size: 28),
+                  onPressed: _showAddPlaylistDialog,
+                ),
               ],
             ),
             const SizedBox(height: 20),
@@ -123,37 +115,6 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 child: Center(
                   child: CircularProgressIndicator(
                       color: Color(0xFF1DB954)),
-                ),
-              )
-            else if (!_isLoggedIn)
-              Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.library_music_rounded,
-                          color: Colors.grey[600], size: 60),
-                      const SizedBox(height: 16),
-                      const Text(
-                        'Log in to view your library',
-                        style:
-                            TextStyle(color: Colors.grey, fontSize: 16),
-                      ),
-                      const SizedBox(height: 20),
-                      ElevatedButton(
-                        onPressed: () =>
-                            Navigator.pushNamed(context, '/login'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1DB954),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(30),
-                          ),
-                        ),
-                        child: const Text('Log In'),
-                      ),
-                    ],
-                  ),
                 ),
               )
             else

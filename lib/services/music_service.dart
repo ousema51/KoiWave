@@ -13,7 +13,7 @@ class MusicService {
   // --- Search ---
   Future<List<Song>> searchSongs(String query) async {
     final result =
-        await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=songs');
+        await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=songs', requiresAuth: false);
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
@@ -25,7 +25,7 @@ class MusicService {
 
   Future<List<Album>> searchAlbums(String query) async {
     final result = await _api
-        .get('/music/search?q=${Uri.encodeComponent(query)}&type=albums');
+        .get('/music/search?q=${Uri.encodeComponent(query)}&type=albums', requiresAuth: false);
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
@@ -39,7 +39,7 @@ class MusicService {
 
   Future<List<Artist>> searchArtists(String query) async {
     final result = await _api
-        .get('/music/search?q=${Uri.encodeComponent(query)}&type=artists');
+        .get('/music/search?q=${Uri.encodeComponent(query)}&type=artists', requiresAuth: false);
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
@@ -53,7 +53,7 @@ class MusicService {
 
   // --- Individual fetch ---
   Future<Song?> getSong(String songId) async {
-    final result = await _api.get('/music/song/$songId');
+    final result = await _api.get('/music/song/$songId', requiresAuth: false);
     if (result['success'] == true && result['data'] != null) {
       return Song.fromJson(result['data'] as Map<String, dynamic>);
     }
@@ -61,7 +61,7 @@ class MusicService {
   }
 
   Future<Album?> getAlbum(String albumId) async {
-    final result = await _api.get('/music/album/$albumId');
+    final result = await _api.get('/music/album/$albumId', requiresAuth: false);
     if (result['success'] == true && result['data'] != null) {
       return Album.fromJson(result['data'] as Map<String, dynamic>);
     }
@@ -69,7 +69,7 @@ class MusicService {
   }
 
   Future<Artist?> getArtist(String artistId) async {
-    final result = await _api.get('/music/artist/$artistId');
+    final result = await _api.get('/music/artist/$artistId', requiresAuth: false);
     if (result['success'] == true && result['data'] != null) {
       return Artist.fromJson(result['data'] as Map<String, dynamic>);
     }
@@ -78,7 +78,7 @@ class MusicService {
 
   // --- Trending / Home ---
   Future<List<Song>> getTrending() async {
-    final result = await _api.get('/music/trending');
+    final result = await _api.get('/music/trending', requiresAuth: false);
     if (result['success'] == true && result['data'] != null) {
       final data = result['data'];
       final List<dynamic> items =
