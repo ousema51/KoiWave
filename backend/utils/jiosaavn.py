@@ -2,7 +2,7 @@ import os
 
 import requests
 
-JIOSAAVN_BASE = os.environ.get("JIOSAAVN_API_BASE", "https://saavn.dev/api")
+JIOSAAVN_BASE = os.environ.get("JIOSAAVN_API_BASE", "https://saavn.sumit.co/api")
 
 
 def _get(path, params=None):
