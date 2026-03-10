@@ -1,84 +1,46 @@
-import sys
 import os
+from functools import wraps
 
-# Make the backend root importable when running from api/
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
-from dotenv import load_dotenv
-load_dotenv()
-
-from flask import Flask, jsonify
-from flask_cors import CORS
+import jwt
+from flask import g, jsonify, request
 
 import models.db as db
-from routes.auth import auth_bp
-from routes.music import music_bp
-from routes.library import library_bp
-from routes.playlists import playlists_bp
-from routes.listening import listening_bp
-from routes.social import social_bp
-from routes.users import users_bp
-
-app = Flask(__name__)
-CORS(app, resources={r"/api/*": {"origins": "*"}})
-
-# Register blueprints
-app.register_blueprint(auth_bp, url_prefix="/api/auth")
-app.register_blueprint(music_bp, url_prefix="/api/music")
-app.register_blueprint(library_bp, url_prefix="/api/library")
-app.register_blueprint(playlists_bp, url_prefix="/api/playlists")
-app.register_blueprint(listening_bp, url_prefix="/api")
-app.register_blueprint(social_bp, url_prefix="/api/users")
-app.register_blueprint(users_bp, url_prefix="/api/users")
-
-# Initialize MongoDB connection
-try:
-    db.init_db()
-except Exception as exc:
-    print(f"[WARNING] Could not connect to MongoDB at startup: {exc}", flush=True)
 
 
-@app.before_request
-def ensure_db():
-    """Ensure MongoDB is connected before processing any request."""
-    try:
-        db._ensure_initialized()
-    except Exception as exc:
-        return jsonify({"success": False, "message": f"Database connection error: {str(exc)}"}), 503
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            return jsonify({"success": False, "message": "Authorization token is missing"}), 401
 
+        token = auth_header.split(" ", 1)[1].strip()
+        if not token:
+            return jsonify({"success": False, "message": "Authorization token is missing"}), 401
 
-@app.route("/api/health", methods=["GET"])
-def health():
-    try:
-        db._ensure_initialized()
-        # Quick ping to verify DB connection
-        db.get_db().command("ping")
-        return jsonify({"success": True, "message": "OK", "db": "connected"}), 200
-    except Exception as exc:
-        return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
+        try:
+            secret = os.environ.get("JWT_SECRET", "changeme")
+            payload = jwt.decode(token, secret, algorithms=["HS256"])
+        except jwt.ExpiredSignatureError:
+            return jsonify({"success": False, "message": "Token has expired"}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({"success": False, "message": "Invalid token"}), 401
 
+        # Check if the session is still valid (not logged out)
+        session = db.sessions.find_one({"token": token, "is_active": True})
+        if not session:
+            return jsonify({"success": False, "message": "Session is invalid or has been revoked"}), 401
 
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({"success": False, "message": "Resource not found"}), 404
+        from bson import ObjectId
 
+        user = db.users.find_one({"_id": ObjectId(payload["user_id"])})
+        if not user:
+            return jsonify({"success": False, "message": "User not found"}), 401
 
-@app.errorhandler(500)
-def internal_error(e):
-    import traceback
-    print(f"[500 ERROR] {e}", flush=True)
-    traceback.print_exc()
-    return jsonify({"success": False, "message": f"Internal server error: {str(e)}"}), 500
+        user["_id"] = str(user["_id"])
+        user.pop("password_hash", None)
+        g.current_user = user
+        g.token = token
+        return f(*args, **kwargs)
 
-
-@app.errorhandler(Exception)
-def handle_exception(e):
-    import traceback
-    print(f"[UNHANDLED ERROR] {e}", flush=True)
-    traceback.print_exc()
-    return jsonify({"success": False, "message": f"Server error: {str(e)}"}), 500
-
-
-if __name__ == "__main__":
-    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
-    app.run(debug=debug)
+    return decorated
