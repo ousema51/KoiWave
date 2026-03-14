@@ -17,7 +17,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final MusicService _musicService = MusicService();
   final AuthService _authService = AuthService();
   List<Song> _likedSongs = [];
-  List<String> _playlists = [];
+  final List<String> _playlists = [];
   bool _isLoading = true;
   bool _isLoggedIn = false;
 
