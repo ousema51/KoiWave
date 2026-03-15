@@ -154,51 +154,58 @@ def get_stream_url(video_id):
                 f"https://music.youtube.com/watch?v={video_id}",
                 f"https://www.youtube.com/watch?v={video_id}"
             ]
+            attempt_results = []
             for url in candidates:
+                attempt = {"url": url, "success": False, "error": None, "formats_count": 0}
                 try:
                     print(f"[youtube_music] attempting extraction for: {url}", flush=True)
                     ydl_opts = {"format": "bestaudio", "quiet": True}
                     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                         info = ydl.extract_info(url, download=False)
+
                     # Log some info keys for debugging
                     try:
-                        print(f"[youtube_music] yt-dlp info keys: {list(info.keys())}", flush=True)
+                        attempt["info_keys"] = list(info.keys())
                     except Exception:
-                        pass
+                        attempt["info_keys"] = []
 
                     # Prefer direct 'url' if present
                     stream_url = info.get('url')
                     if stream_url:
+                        attempt["success"] = True
+                        attempt["selected"] = "direct"
+                        attempt_results.append(attempt)
                         print(f"[youtube_music] extracted direct url", flush=True)
                         return {"success": True, "data": {"stream_url": stream_url}}
 
                     # Otherwise inspect formats to pick best audio
                     formats = info.get('formats') or info.get('requested_formats') or []
-                    if formats:
-                        # pick highest abr audio-only or best audio-containing format
-                        best = None
-                        best_abr = -1
-                        for f in formats:
-                            # some formats use 'abr' (audio bitrate)
-                            abr = f.get('abr') or f.get('tbr') or 0
-                            # prefer audio-only types
-                            acodec = f.get('acodec')
-                            vcodec = f.get('vcodec')
-                            is_audio_only = (vcodec in (None, 'none', 'unknown') or vcodec == 'none') and acodec not in (None, 'none')
-                            score = int(abr) if abr else 0
-                            # boost audio-only formats
-                            if is_audio_only:
-                                score += 10000
-                            if score > best_abr:
-                                best_abr = score
-                                best = f
-                        if best:
-                            stream_url = best.get('url')
-                            if stream_url:
-                                print(f"[youtube_music] selected format url from formats", flush=True)
-                                return {"success": True, "data": {"stream_url": stream_url}}
-                    # no usable url from this candidate
+                    attempt["formats_count"] = len(formats) if formats else 0
+                    best = None
+                    best_score = -1
+                    for f in formats:
+                        abr = f.get('abr') or f.get('tbr') or 0
+                        acodec = f.get('acodec')
+                        vcodec = f.get('vcodec')
+                        is_audio_only = (vcodec in (None, 'none', 'unknown') or vcodec == 'none') and acodec not in (None, 'none')
+                        score = int(abr) if abr else 0
+                        if is_audio_only:
+                            score += 10000
+                        if score > best_score:
+                            best_score = score
+                            best = f
+                    if best:
+                        attempt["selected"] = "format"
+                        attempt["selected_format"] = {"format_id": best.get('format_id'), "abr": best.get('abr'), "has_url": bool(best.get('url'))}
+                        attempt_results.append(attempt)
+                        stream_url = best.get('url')
+                        if stream_url:
+                            print(f"[youtube_music] selected format url from formats", flush=True)
+                            return {"success": True, "data": {"stream_url": stream_url}}
+                    attempt_results.append(attempt)
                 except Exception as e:
+                    attempt["error"] = str(e)
+                    attempt_results.append(attempt)
                     print(f"[youtube_music] extraction failed for {url}: {e}", flush=True)
                     print(traceback.format_exc(), flush=True)
                     pass
@@ -224,10 +231,12 @@ def get_stream_url(video_id):
                 except Exception:
                     pass
 
-            return {"success": False, "message": "Could not resolve stream URL"}
+            # If we reach here, no candidate produced a usable stream
+            return {"success": False, "message": "Could not resolve stream URL", "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
         except Exception as e:
-            return {"success": False, "message": str(e)}
-    return {"success": False, "message": "yt_dlp not available on server"}
+            return {"success": False, "message": str(e), "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
+    # yt-dlp not available
+    return {"success": False, "message": "yt_dlp not available on server", "details": {"yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
 
 
 def get_stream_from_search(query, index=0):
