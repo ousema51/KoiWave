@@ -1,6 +1,6 @@
 from flask import Blueprint, jsonify, request
 
-from utils import jiosaavn
+from utils import youtube_music
 
 music_bp = Blueprint("music", __name__)
 
@@ -16,13 +16,13 @@ def search():
         return jsonify({"success": False, "message": "Query parameter 'q' is required"}), 400
 
     if search_type == "songs":
-        result = jiosaavn.search_songs(query, page=page, limit=limit)
+        result = youtube_music.search_songs(query, page=page, limit=limit)
     elif search_type == "albums":
-        result = jiosaavn.search_albums(query, page=page, limit=limit)
+        result = youtube_music.search_albums(query, page=page, limit=limit)
     elif search_type == "artists":
-        result = jiosaavn.search_artists(query, page=page, limit=limit)
+        result = youtube_music.search_artists(query, page=page, limit=limit)
     else:
-        result = jiosaavn.search_all(query)
+        result = youtube_music.search_all(query)
 
     if result.get("success") is False and "message" in result:
         return jsonify({"success": False, "message": result["message"]}), 502
@@ -32,7 +32,7 @@ def search():
 
 @music_bp.route("/song/<song_id>", methods=["GET"])
 def get_song(song_id):
-    result = jiosaavn.get_song_by_id(song_id)
+    result = youtube_music.get_song_by_id(song_id)
     if result.get("success") is False and "message" in result:
         return jsonify({"success": False, "message": result["message"]}), 502
     return jsonify({"success": True, "data": result.get("data", result)}), 200
@@ -40,7 +40,7 @@ def get_song(song_id):
 
 @music_bp.route("/album/<album_id>", methods=["GET"])
 def get_album(album_id):
-    result = jiosaavn.get_album_by_id(album_id)
+    result = youtube_music.get_album_by_id(album_id)
     if result.get("success") is False and "message" in result:
         return jsonify({"success": False, "message": result["message"]}), 502
     return jsonify({"success": True, "data": result.get("data", result)}), 200
@@ -48,7 +48,7 @@ def get_album(album_id):
 
 @music_bp.route("/artist/<artist_id>", methods=["GET"])
 def get_artist(artist_id):
-    result = jiosaavn.get_artist_by_id(artist_id)
+    result = youtube_music.get_artist_by_id(artist_id)
     if result.get("success") is False and "message" in result:
         return jsonify({"success": False, "message": result["message"]}), 502
     return jsonify({"success": True, "data": result.get("data", result)}), 200
@@ -56,7 +56,7 @@ def get_artist(artist_id):
 
 @music_bp.route("/trending", methods=["GET"])
 def trending():
-    result = jiosaavn.get_trending()
+    result = youtube_music.get_trending()
     if result.get("success") is False and "message" in result:
         return jsonify({"success": False, "message": result["message"]}), 502
     return jsonify({"success": True, "data": result.get("data", result)}), 200

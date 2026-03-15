@@ -12,42 +12,23 @@ class MusicService {
 
   // --- Search ---
   Future<List<Song>> searchSongs(String query) async {
-    final result =
-        await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=songs');
+    final result = await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=songs');
     if (result['success'] == true && result['data'] != null) {
-      final data = result['data'];
-      final List<dynamic> items =
-          data['songs'] ?? data['results'] ?? data ?? [];
+      final List<dynamic> items = result['data'] is List ? result['data'] : [];
       return items.map((e) => Song.fromJson(e as Map<String, dynamic>)).toList();
     }
     return [];
   }
 
   Future<List<Album>> searchAlbums(String query) async {
-    final result = await _api
-        .get('/music/search?q=${Uri.encodeComponent(query)}&type=albums');
-    if (result['success'] == true && result['data'] != null) {
-      final data = result['data'];
-      final List<dynamic> items =
-          data['albums'] ?? data['results'] ?? data ?? [];
-      return items
-          .map((e) => Album.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
+    final result = await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=albums');
+    // YouTube Music backend returns empty list for albums
     return [];
   }
 
   Future<List<Artist>> searchArtists(String query) async {
-    final result = await _api
-        .get('/music/search?q=${Uri.encodeComponent(query)}&type=artists');
-    if (result['success'] == true && result['data'] != null) {
-      final data = result['data'];
-      final List<dynamic> items =
-          data['artists'] ?? data['results'] ?? data ?? [];
-      return items
-          .map((e) => Artist.fromJson(e as Map<String, dynamic>))
-          .toList();
-    }
+    final result = await _api.get('/music/search?q=${Uri.encodeComponent(query)}&type=artists');
+    // YouTube Music backend returns empty list for artists
     return [];
   }
 

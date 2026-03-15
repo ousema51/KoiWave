@@ -111,6 +111,7 @@ class Song {
     return null;
   }
 
+  // ignore: unused_element
   static String? _getBestStreamUrl(dynamic downloadUrls) {
     if (downloadUrls == null) return null;
     if (downloadUrls is String) return downloadUrls;
