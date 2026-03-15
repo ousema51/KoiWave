@@ -74,7 +74,9 @@ def search_songs(query: str, page: int = 1, limit: int = 20) -> dict:
         songs = [ _normalize_song_entry(r) for r in (results[start:end] if results else []) ]
 
         # Fallback: use yt-dlp search
-        if not songs and _YTDLP_AVAILABLE and yt_dlp is not None:
+        if not songs:
+            if not _YTDLP_AVAILABLE or yt_dlp is None:
+                return {"success": False, "message": "yt_dlp not available for fallback search"}
             try:
                 q = f"ytsearch{limit}:{query}"
                 with yt_dlp.YoutubeDL({"quiet": True, "skip_download": True}) as ydl:
@@ -89,8 +91,8 @@ def search_songs(query: str, page: int = 1, limit: int = 20) -> dict:
                         "duration": e.get("duration"),
                         "thumbnail": e.get("thumbnail"),
                     })
-            except Exception:
-                pass
+            except Exception as ex:
+                return {"success": False, "message": f"yt_dlp fallback failed: {ex}"}
 
         # Last-resort: minimal HTML scraping of youtube results page
         if not songs:
@@ -133,12 +135,12 @@ def search_songs(query: str, page: int = 1, limit: int = 20) -> dict:
                             'duration': None,
                             'thumbnail': thumbnail
                         })
-            except Exception:
-                pass
+            except Exception as ex:
+                return {"success": False, "message": f"HTML fallback failed: {ex}"}
 
         return {"success": True, "data": songs}
     except Exception as e:
-        return {"success": False, "message": str(e)}
+        return {"success": False, "message": f"search_songs crashed: {e}", "traceback": traceback.format_exc()}
 
 
 def get_song_by_id(video_id: str) -> dict:
