@@ -19,6 +19,7 @@ import re
 import json
 import os
 import tempfile
+import base64
 
 _TEMP_COOKIE_FILE = None
 
@@ -172,6 +173,14 @@ def get_stream_url(video_id):
             cookies_path = os.environ.get("YTDLP_COOKIES_PATH")
             # If cookie content is supplied via env var (useful for serverless), write it to a temp file
             cookies_content = os.environ.get("YTDLP_COOKIES_CONTENT")
+            # Support base64-encoded cookie content (useful for Vercel UI / env length/newline issues)
+            if not cookies_content:
+                cookies_b64 = os.environ.get("YTDLP_COOKIES_CONTENT_B64")
+                if cookies_b64:
+                    try:
+                        cookies_content = base64.b64decode(cookies_b64).decode("utf-8")
+                    except Exception as _e:
+                        cookies_content = None
             if cookies_content and not cookies_path:
                 # Write content to a secure temp file that yt-dlp can read
                 fd, temp_cookie_path = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
