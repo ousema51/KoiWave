@@ -1,8 +1,6 @@
 import sys
 import os
 
-from backend.utils.youtube_music import health_check
-
 # Make the backend root importable when running from api/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -21,7 +19,6 @@ from routes.users import users_bp
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
 
-# Register blueprints
 app.register_blueprint(auth_bp, url_prefix="/api/auth")
 app.register_blueprint(music_bp, url_prefix="/api/music")
 app.register_blueprint(library_bp, url_prefix="/api/library")
@@ -30,31 +27,28 @@ app.register_blueprint(listening_bp, url_prefix="/api")
 app.register_blueprint(social_bp, url_prefix="/api/users")
 app.register_blueprint(users_bp, url_prefix="/api/users")
 
-# Initialize MongoDB connection
 try:
     db.init_db()
 except Exception as exc:
-    print(f"[WARNING] Could not connect to MongoDB at startup: {exc}", flush=True)
+    print("[WARNING] Could not connect to MongoDB at startup: {}".format(exc), flush=True)
 
 
 @app.before_request
 def ensure_db():
-    """Ensure MongoDB is connected before processing any request."""
     try:
         db._ensure_initialized()
     except Exception as exc:
-        return jsonify({"success": False, "message": f"Database connection error: {str(exc)}"}), 503
+        return jsonify({"success": False, "message": "Database connection error: {}".format(str(exc))}), 503
 
 
 @app.route("/api/health", methods=["GET"])
 def health():
     try:
         db._ensure_initialized()
-        # Quick ping to verify DB connection
         db.get_db().command("ping")
         return jsonify({"success": True, "message": "OK", "db": "connected"}), 200
     except Exception as exc:
-        return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
+        return jsonify({"success": True, "message": "OK", "db": "error: {}".format(str(exc))}), 200
 
 
 @app.errorhandler(404)

@@ -10,7 +10,6 @@ music_bp = Blueprint("music", __name__)
 def search():
     query = (request.args.get("q") or "").strip()
     search_type = (request.args.get("type") or "all").lower()
-    # Defensive parsing for page/limit
     try:
         page = int(request.args.get("page", 1))
     except Exception:
@@ -24,7 +23,7 @@ def search():
         return jsonify({"success": False, "message": "Query parameter 'q' is required"}), 400
 
     try:
-        print(f"[search] q={query!r} type={search_type} page={page} limit={limit}", flush=True)
+        print("[search] q={} type={} page={} limit={}".format(repr(query), search_type, page, limit), flush=True)
         if search_type == "songs":
             result = youtube_music.search_songs(query, page=page, limit=limit)
         elif search_type == "albums":
@@ -34,23 +33,21 @@ def search():
         else:
             result = youtube_music.search_all(query)
 
-        # Normalize result: if a list is returned, wrap it; if dict with success, return as-is
         if isinstance(result, list):
             data = result
         elif isinstance(result, dict):
             if result.get("success") is False:
-                print(f"[search] error: {result.get('message')}", flush=True)
+                print("[search] error: {}".format(result.get("message")), flush=True)
                 return jsonify({"success": False, "message": result.get("message", "Search failed")}), 502
             data = result.get("data", None)
         else:
             data = result
 
-        # Log number of results
         try:
             count = len(data) if data is not None else 0
         except Exception:
             count = 1
-        print(f"[search] returned {count} result(s)", flush=True)
+        print("[search] returned {} result(s)".format(count), flush=True)
 
         return jsonify({"success": True, "data": data}), 200
     except Exception as e:
@@ -94,7 +91,6 @@ def trending():
 @music_bp.route("/stream/<video_id>", methods=["GET"])
 def stream(video_id):
     try:
-        # Optional query param `q` — if provided, perform a music search and stream the search result
         query = (request.args.get("q") or "").strip()
         if query:
             result = youtube_music.get_stream_from_search(query)
@@ -105,3 +101,9 @@ def stream(video_id):
         return jsonify({"success": True, "data": result.get("data")}), 200
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
+
+
+@music_bp.route("/health", methods=["GET"])
+def music_health():
+    result = youtube_music.health_check()
+    return jsonify(result), 200
