@@ -3,20 +3,27 @@ import yt_dlp
 
 ytmusic = YTMusic()
 
+
 def search_songs(query, page=1, limit=20):
-    results = ytmusic.search(query, filter="songs")
+    try:
+        # ytmusic.search returns a list of results; use page/limit to slice
+        results = ytmusic.search(query, filter="songs") or []
+        start = max(0, (page - 1) * limit)
+        end = start + limit
 
-    songs = []
-    for r in results[:limit]:
-        songs.append({
-            "id": r.get("videoId"),
-            "title": r.get("title"),
-            "artist": r["artists"][0]["name"] if r.get("artists") else None,
-            "duration": r.get("duration"),
-            "thumbnail": r["thumbnails"][-1]["url"] if r.get("thumbnails") else None
-        })
+        songs = []
+        for r in results[start:end]:
+            songs.append({
+                "id": r.get("videoId") or r.get("browseId") or r.get("video_id"),
+                "title": r.get("title"),
+                "artist": (r.get("artists") and len(r.get("artists")) > 0 and r.get("artists")[0].get("name")) or None,
+                "duration": r.get("duration"),
+                "thumbnail": (r.get("thumbnails") and len(r.get("thumbnails")) > 0 and r.get("thumbnails")[-1].get("url")) or None
+            })
 
-    return {"success": True, "data": songs}
+        return {"success": True, "data": songs}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 def get_song_by_id(video_id):

@@ -79,14 +79,25 @@ class ApiService {
 
   Map<String, dynamic> _handleResponse(http.Response response) {
     try {
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = jsonDecode(response.body);
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        return data;
+        // If server returned a plain list, wrap into expected map
+        if (data is List) {
+          return {'success': true, 'data': data};
+        }
+        if (data is Map<String, dynamic>) {
+          // If server already returns {success:..., data:...}, pass through
+          return data;
+        }
+        // Other JSON types (string/number/null) -> wrap
+        return {'success': true, 'data': data};
       }
-      return {
-        'success': false,
-        'message': data['message'] ?? 'Request failed',
-      };
+
+      // Non-2xx responses
+      if (data is Map<String, dynamic>) {
+        return {'success': false, 'message': data['message'] ?? 'Request failed'};
+      }
+      return {'success': false, 'message': 'Request failed'};
     } catch (_) {
       return {
         'success': false,

@@ -15,19 +15,30 @@ def search():
     if not query:
         return jsonify({"success": False, "message": "Query parameter 'q' is required"}), 400
 
-    if search_type == "songs":
-        result = youtube_music.search_songs(query, page=page, limit=limit)
-    elif search_type == "albums":
-        result = youtube_music.search_albums(query, page=page, limit=limit)
-    elif search_type == "artists":
-        result = youtube_music.search_artists(query, page=page, limit=limit)
-    else:
-        result = youtube_music.search_all(query)
+    try:
+        if search_type == "songs":
+            result = youtube_music.search_songs(query, page=page, limit=limit)
+        elif search_type == "albums":
+            result = youtube_music.search_albums(query, page=page, limit=limit)
+        elif search_type == "artists":
+            result = youtube_music.search_artists(query, page=page, limit=limit)
+        else:
+            result = youtube_music.search_all(query)
 
-    if result.get("success") is False and "message" in result:
-        return jsonify({"success": False, "message": result["message"]}), 502
+        # Normalize result: if a list is returned, wrap it; if dict with success, return as-is
+        if isinstance(result, list):
+            return jsonify({"success": True, "data": result}), 200
+        if isinstance(result, dict):
+            if result.get("success") is False:
+                return jsonify({"success": False, "message": result.get("message", "Search failed")}), 502
+            # Ensure data key exists
+            data = result.get("data", None)
+            return jsonify({"success": True, "data": data}), 200
 
-    return jsonify({"success": True, "data": result.get("data", result)}), 200
+        # Fallback
+        return jsonify({"success": True, "data": result}), 200
+    except Exception as e:
+        return jsonify({"success": False, "message": str(e)}), 500
 
 
 @music_bp.route("/song/<song_id>", methods=["GET"])

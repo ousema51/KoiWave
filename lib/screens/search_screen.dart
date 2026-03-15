@@ -64,20 +64,9 @@ class _SearchScreenState extends State<SearchScreen> {
 
     try {
       final songs = await _musicService.searchSongs(query);
-      List<Album> albums = [];
-      List<Artist> artists = [];
-      try {
-        albums = await _musicService.searchAlbums(query);
-      } catch (_) {}
-      try {
-        artists = await _musicService.searchArtists(query);
-      } catch (_) {}
-
       if (mounted) {
         setState(() {
           _songResults = songs;
-          _albumResults = albums;
-          _artistResults = artists;
           _hasSearched = true;
           _isSearching = false;
         });
@@ -173,76 +162,7 @@ class _SearchScreenState extends State<SearchScreen> {
               )),
           const SizedBox(height: 20),
         ],
-        if (_albumResults.isNotEmpty) ...[
-          const Text(
-            'Albums',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            height: 190,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              itemCount: _albumResults.length,
-              itemBuilder: (context, index) {
-                final album = _albumResults[index];
-                return AlbumCard(
-                  album: album,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => AlbumScreen(
-                        albumId: album.id,
-                        onSongSelected: widget.onSongSelected,
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 20),
-        ],
-        if (_artistResults.isNotEmpty) ...[
-          const Text(
-            'Artists',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          ..._artistResults.map((artist) => ListTile(
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-                leading: CircleAvatar(
-                  radius: 26,
-                  backgroundColor: const Color(0xFF282828),
-                  backgroundImage: artist.imageUrl != null
-                      ? NetworkImage(artist.imageUrl!)
-                      : null,
-                  child: artist.imageUrl == null
-                      ? const Icon(Icons.person_rounded,
-                          color: Colors.white54)
-                      : null,
-                ),
-                title: Text(
-                  artist.name,
-                  style: const TextStyle(color: Colors.white),
-                ),
-                subtitle: Text('Artist',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 12)),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => ArtistScreen(
-                      artistId: artist.id,
-                      onSongSelected: widget.onSongSelected,
-                    ),
-                  ),
-                ),
-              )),
-        ],
-        if (_songResults.isEmpty &&
-            _albumResults.isEmpty &&
-            _artistResults.isEmpty)
+        if (_songResults.isEmpty)
           const Center(
             child: Padding(
               padding: EdgeInsets.symmetric(vertical: 40),
