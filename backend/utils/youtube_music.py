@@ -14,6 +14,10 @@ except Exception as _e:
     yt_dlp = None
     _YTDLP_AVAILABLE = False
 
+import requests
+import re
+import json
+
 ytmusic = None
 if _YT_AVAILABLE:
     try:
@@ -64,6 +68,59 @@ def search_songs(query, page=1, limit=20):
             except Exception as _e:
                 print(f"[youtube_music] yt_dlp fallback failed: {_e}", flush=True)
                 # ignore fallback errors and return whatever we have
+                pass
+
+        # If still no songs, try scraping YouTube search results page (minimal, relies on public HTML)
+        if not songs:
+            try:
+                url = f"https://www.youtube.com/results?search_query={requests.utils.requote_uri(query)}"
+                resp = requests.get(url, timeout=6)
+                html = resp.text
+                # Extract the ytInitialData JSON blob
+                m = re.search(r"var ytInitialData = (\{.*?\});", html)
+                if not m:
+                    m = re.search(r"window\[\"ytInitialData\"\] = (\{.*?\});", html)
+                if m:
+                    data = json.loads(m.group(1))
+                    # Traverse to contents -> twoColumnSearchResultsRenderer -> primaryContents
+                    contents = data.get('contents') or {}
+                    # This structure can vary; try to find videoRenderer nodes
+                    def find_video_renderers(obj):
+                        results = []
+                        if isinstance(obj, dict):
+                            for k, v in obj.items():
+                                if k == 'videoRenderer' and isinstance(v, dict):
+                                    results.append(v)
+                                else:
+                                    results.extend(find_video_renderers(v))
+                        elif isinstance(obj, list):
+                            for item in obj:
+                                results.extend(find_video_renderers(item))
+                        return results
+
+                    video_nodes = find_video_renderers(data)
+                    songs = []
+                    for v in video_nodes[start:end]:
+                        vid = v.get('videoId')
+                        title_runs = v.get('title', {}).get('runs') or []
+                        title = title_runs[0].get('text') if title_runs else v.get('title', {}).get('simpleText')
+                        thumbnail = None
+                        thumbnails = v.get('thumbnail', {}).get('thumbnails') if v.get('thumbnail') else None
+                        if thumbnails:
+                            thumbnail = thumbnails[-1].get('url')
+                        artists = None
+                        # uploader info
+                        owner_text = v.get('ownerText', {}).get('runs') if v.get('ownerText') else None
+                        artist = owner_text[0].get('text') if owner_text else None
+                        songs.append({
+                            'id': vid,
+                            'title': title,
+                            'artist': artist,
+                            'duration': None,
+                            'thumbnail': thumbnail
+                        })
+            except Exception as _e:
+                print(f"[youtube_music] html fallback failed: {_e}", flush=True)
                 pass
 
         return {"success": True, "data": songs}
