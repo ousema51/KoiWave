@@ -166,35 +166,108 @@ def get_stream_url(video_id):
     if _YTDLP_AVAILABLE and yt_dlp is not None:
         temp_cookie_path = None
         try:
-            url = f"https://www.youtube.com/watch?v={video_id}"
-            ydl_opts = {"format": "bestaudio", "quiet": True}
+            # Try music.youtube.com first (better for official music uploads), then fallback to youtube.com
+            candidates = [
+                f"https://music.youtube.com/watch?v={video_id}",
+                f"https://www.youtube.com/watch?v={video_id}"
+            ]
 
-            # Prefer an explicit cookies file path
+            # Prepare cookie handling (support path, raw content, or base64 content)
             cookies_path = os.environ.get("YTDLP_COOKIES_PATH")
-            # If cookie content is supplied via env var (useful for serverless), write it to a temp file
             cookies_content = os.environ.get("YTDLP_COOKIES_CONTENT")
-            # Support base64-encoded cookie content (useful for Vercel UI / env length/newline issues)
             if not cookies_content:
                 cookies_b64 = os.environ.get("YTDLP_COOKIES_CONTENT_B64")
                 if cookies_b64:
                     try:
                         cookies_content = base64.b64decode(cookies_b64).decode("utf-8")
-                    except Exception as _e:
+                    except Exception:
                         cookies_content = None
-            if cookies_content and not cookies_path:
-                # Write content to a secure temp file that yt-dlp can read
-                fd, temp_cookie_path = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
-                with os.fdopen(fd, "w", encoding="utf-8") as f:
-                    f.write(cookies_content)
-                ydl_opts["cookiefile"] = temp_cookie_path
-            elif cookies_path:
-                ydl_opts["cookiefile"] = cookies_path
 
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-            stream_url = info.get('url')
-            if stream_url:
-                return {"success": True, "data": {"stream_url": stream_url}}
+            # Helper to run yt-dlp on a URL with prepared options
+            def _run_ydl_extract(target_url, cookiefile=None):
+                ydl_opts = {"format": "bestaudio", "quiet": True}
+                if cookiefile:
+                    ydl_opts["cookiefile"] = cookiefile
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    return ydl.extract_info(target_url, download=False)
+
+            last_exception = None
+            # If a cookie file path is provided, prefer using it
+            if cookies_path:
+                try:
+                    for url in candidates:
+                        info = _run_ydl_extract(url, cookiefile=cookies_path)
+                        stream_url = info.get('url')
+                        if stream_url:
+                            return {"success": True, "data": {"stream_url": stream_url}}
+                except Exception as e:
+                    last_exception = e
+
+            # If cookie content is supplied via env, write temp file and use it
+            if cookies_content and not cookies_path:
+                fd, temp_cookie_path = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
+                try:
+                    with os.fdopen(fd, "w", encoding="utf-8") as f:
+                        f.write(cookies_content)
+                    for url in candidates:
+                        try:
+                            info = _run_ydl_extract(url, cookiefile=temp_cookie_path)
+                            stream_url = info.get('url')
+                            if stream_url:
+                                return {"success": True, "data": {"stream_url": stream_url}}
+                        except Exception as e:
+                            last_exception = e
+                finally:
+                    # will be cleaned up in finally block below
+                    pass
+
+            # Try without cookies (best-effort) — many music videos work without cookies
+            try:
+                for url in candidates:
+                    try:
+                        info = _run_ydl_extract(url, cookiefile=None)
+                        stream_url = info.get('url')
+                        if stream_url:
+                            return {"success": True, "data": {"stream_url": stream_url}}
+                    except Exception as e:
+                        last_exception = e
+            except Exception as e:
+                last_exception = e
+
+            # If we reach here, attempt a safer search-based approach using ytmusicapi
+            if ytmusic and video_id:
+                try:
+                    # Try to find a music search result that matches this video id
+                    # Search for the video id string itself (sometimes yields the music entry)
+                    results = ytmusic.search(video_id, filter="songs") or []
+                    if results:
+                        # pick the first music result
+                        first = results[0]
+                        vid = first.get('videoId')
+                        if vid and vid != video_id:
+                            for base in [f"https://music.youtube.com/watch?v={vid}", f"https://www.youtube.com/watch?v={vid}"]:
+                                try:
+                                    info = _run_ydl_extract(base, cookiefile=None)
+                                    stream_url = info.get('url')
+                                    if stream_url:
+                                        return {"success": True, "data": {"stream_url": stream_url}}
+                                except Exception as e:
+                                    last_exception = e
+                except Exception as e:
+                    last_exception = e
+
+            # Final error handling
+            if last_exception:
+                msg = str(last_exception)
+                if "Sign in to confirm you're not a bot" in msg or "cookies" in msg.lower():
+                    advice = (
+                        "Sign in required for this video. Export YouTube cookies from your browser "
+                        "and set the YTDLP_COOKIES_PATH env var on the server to point to the cookies.txt file, "
+                        "or set YTDLP_COOKIES_CONTENT with the file contents if your platform only supports env vars. "
+                        "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for details."
+                    )
+                    return {"success": False, "message": advice}
+                return {"success": False, "message": msg}
             return {"success": False, "message": "Could not resolve stream URL"}
         except Exception as e:
             msg = str(e)
@@ -215,6 +288,23 @@ def get_stream_url(video_id):
             except Exception:
                 pass
     return {"success": False, "message": "yt_dlp not available on server"}
+
+
+def get_stream_from_search(query, index=0):
+    """Search YouTube Music for `query` (songs) and return a stream URL for the chosen result index."""
+    if not ytmusic:
+        return {"success": False, "message": "ytmusicapi not available"}
+    try:
+        results = ytmusic.search(query, filter="songs") or []
+        if not results:
+            return {"success": False, "message": "No song results found"}
+        chosen = results[index] if index < len(results) else results[0]
+        vid = chosen.get('videoId')
+        if not vid:
+            return {"success": False, "message": "No videoId found for chosen song"}
+        return get_stream_url(vid)
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 def search_all(query):

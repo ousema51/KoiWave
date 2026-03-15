@@ -94,7 +94,12 @@ def trending():
 @music_bp.route("/stream/<video_id>", methods=["GET"])
 def stream(video_id):
     try:
-        result = youtube_music.get_stream_url(video_id)
+        # Optional query param `q` — if provided, perform a music search and stream the search result
+        query = (request.args.get("q") or "").strip()
+        if query:
+            result = youtube_music.get_stream_from_search(query)
+        else:
+            result = youtube_music.get_stream_url(video_id)
         if result.get("success") is False:
             return jsonify({"success": False, "message": result.get("message", "Failed to resolve stream URL")}), 502
         return jsonify({"success": True, "data": result.get("data")}), 200
