@@ -18,6 +18,9 @@ import requests
 import re
 import json
 import os
+import tempfile
+
+_TEMP_COOKIE_FILE = None
 
 ytmusic = None
 if _YT_AVAILABLE:
@@ -160,13 +163,24 @@ def get_stream_url(video_id):
     Uses yt_dlp on the server. Returns {'success': True, 'data': {'stream_url': url}} or error.
     """
     if _YTDLP_AVAILABLE and yt_dlp is not None:
+        temp_cookie_path = None
         try:
             url = f"https://www.youtube.com/watch?v={video_id}"
             ydl_opts = {"format": "bestaudio", "quiet": True}
-            # If a cookies file path is provided via env var, pass it to yt-dlp
+
+            # Prefer an explicit cookies file path
             cookies_path = os.environ.get("YTDLP_COOKIES_PATH")
-            if cookies_path:
+            # If cookie content is supplied via env var (useful for serverless), write it to a temp file
+            cookies_content = os.environ.get("YTDLP_COOKIES_CONTENT")
+            if cookies_content and not cookies_path:
+                # Write content to a secure temp file that yt-dlp can read
+                fd, temp_cookie_path = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    f.write(cookies_content)
+                ydl_opts["cookiefile"] = temp_cookie_path
+            elif cookies_path:
                 ydl_opts["cookiefile"] = cookies_path
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
             stream_url = info.get('url')
@@ -175,15 +189,22 @@ def get_stream_url(video_id):
             return {"success": False, "message": "Could not resolve stream URL"}
         except Exception as e:
             msg = str(e)
-            # If yt-dlp complains about needing cookies, return a clearer message
             if "Sign in to confirm you're not a bot" in msg or "cookies" in msg.lower():
                 advice = (
                     "Sign in required for this video. Export YouTube cookies from your browser "
-                    "and set the YTDLP_COOKIES_PATH env var on the server to point to the cookies.txt file. "
+                    "and set the YTDLP_COOKIES_PATH env var on the server to point to the cookies.txt file, "
+                    "or set YTDLP_COOKIES_CONTENT with the file contents if your platform only supports env vars. "
                     "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for details."
                 )
                 return {"success": False, "message": advice}
             return {"success": False, "message": msg}
+        finally:
+            # Clean up any temporary cookie file we created
+            try:
+                if temp_cookie_path and os.path.exists(temp_cookie_path):
+                    os.remove(temp_cookie_path)
+            except Exception:
+                pass
     return {"success": False, "message": "yt_dlp not available on server"}
 
 
