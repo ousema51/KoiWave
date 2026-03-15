@@ -1,6 +1,5 @@
 import 'package:just_audio/just_audio.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
 
 class PlayerService {
   static final PlayerService _instance = PlayerService._internal();
@@ -10,73 +9,63 @@ class PlayerService {
 
   PlayerService._internal();
 
+  /// Resolve a YouTube video ID into a playable audio URL
+  /// using youtube_explode_dart (runs on device, not blocked)
+  Future<String?> resolveStreamUrl(String videoId) async {
+    final yt = YoutubeExplode();
+    try {
+      // Clean the video ID
+      String id = videoId;
+      if (videoId.contains('watch?v=')) {
+        final uri = Uri.parse(videoId);
+        id = uri.queryParameters['v'] ?? videoId;
+      }
+
+      print('[PlayerService] resolving stream for: $id');
+      final manifest = await yt.videos.streamsClient.getManifest(id);
+      final audio = manifest.audioOnly.withHighestBitrate();
+      final url = audio.url.toString();
+      print('[PlayerService] resolved: $url');
+      return url;
+    } catch (e) {
+      print('[PlayerService] resolveStreamUrl error: $e');
+      return null;
+    } finally {
+      yt.close();
+    }
+  }
+
+  /// Play a direct audio URL
   Future<bool> playUrl(String url) async {
     try {
-      print('[PlayerService] playUrl: $url');
-      try {
-        await player.setAudioSource(AudioSource.uri(Uri.parse(url)));
-      } catch (_) {
-        // Fallback to setUrl for older just_audio versions/platform quirks
-        await player.setUrl(url);
-      }
+      print('[PlayerService] playUrl: ${url.substring(0, 80)}...');
+      await player.setAudioSource(AudioSource.uri(Uri.parse(url)));
       await player.play();
       return true;
-    } catch (e, st) {
+    } catch (e) {
       print('[PlayerService] playUrl error: $e');
-      print(st);
       return false;
     }
   }
 
+  /// Play a YouTube video by ID — resolves stream on device
   Future<bool> playYoutubeVideo(String videoId) async {
-    if (kIsWeb) {
-      print('[PlayerService] playYoutubeVideo: not supported on Web (CORS)');
+    final url = await resolveStreamUrl(videoId);
+    if (url == null) {
+      print('[PlayerService] could not resolve stream for $videoId');
       return false;
     }
-    try {
-      print('[PlayerService] playYoutubeVideo attempt for: $videoId');
-      // Normalize videoId: accept full URL or bare id
-      String id = videoId;
-      try {
-        if (videoId.contains('watch?v=')) {
-          final uri = Uri.parse(videoId);
-          id = uri.queryParameters['v'] ?? videoId;
-        }
-      } catch (_) {}
-
-      final yt = YoutubeExplode();
-      try {
-        print('[PlayerService] resolving manifest for id: $id');
-        final manifest = await yt.videos.streamsClient.getManifest(id);
-        final audio = manifest.audioOnly.withHighestBitrate();
-        final url = audio.url.toString();
-        print('[PlayerService] resolved audio url: $url');
-        final ok = await playUrl(url);
-        print('[PlayerService] playUrl returned: $ok');
-        return ok;
-      } finally {
-        yt.close();
-      }
-    } catch (e, st) {
-      print('[PlayerService] playYoutubeVideo error: $e');
-      print(st);
-      return false;
-    }
+    return playUrl(url);
   }
 
-  Future<void> pause() async {
-    await player.pause();
-  }
+  Future<void> pause() async => await player.pause();
+  Future<void> resume() async => await player.play();
+  Future<void> stop() async => await player.stop();
+  Future<void> seek(Duration position) async => await player.seek(position);
 
-  Future<void> resume() async {
-    await player.play();
-  }
-
-  Future<void> stop() async {
-    await player.stop();
-  }
-
-  Stream<bool> get playingStream => player.playerStateStream.map((s) => s.playing);
+  Stream<bool> get playingStream =>
+      player.playerStateStream.map((s) => s.playing);
   Stream<PlayerState> get playerStateStream => player.playerStateStream;
   Stream<Duration> get positionStream => player.positionStream;
+  Stream<Duration?> get durationStream => player.durationStream;
 }

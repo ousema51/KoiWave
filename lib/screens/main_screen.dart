@@ -21,62 +21,27 @@ class _MainScreenState extends State<MainScreen> {
   bool _isFullPlayer = false;
   Song? _currentSong;
   final AuthService _authService = AuthService();
+  final PlayerService _player = PlayerService();
 
   void _onSongSelected(Song song) {
-    // Set current song immediately for UI then attempt to load stream and play
     setState(() => _currentSong = song);
     _loadAndPlay(song);
   }
 
   Future<void> _loadAndPlay(Song song) async {
-    final PlayerService player = PlayerService();
-    // Ensure we have streamUrl; fetch full song if missing
-    String? url = song.streamUrl;
-    if (url == null || url.isEmpty) {
-      final full = await MusicService().getSong(song.id);
-      url = full?.streamUrl;
-      if (full != null) {
-        setState(() => _currentSong = full);
-      }
-    }
-    if (url != null && url.isNotEmpty) {
-      print('[MainScreen] playing url from backend: $url');
-      final ok = await player.playUrl(url);
-      if (!ok && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Playback failed: unable to load stream')),
-        );
-      }
-    } else {
-      // Try resolving YouTube stream via backend search-based resolver first
-      final videoId = song.id;
-      print('[MainScreen] no backend streamUrl, will try video id: $videoId');
-      bool played = false;
-      if (videoId != null && videoId.isNotEmpty) {
-        // Try backend search-based resolver using song title as a hint (avoids cookie prompts)
-        final backendUrl = await MusicService().getStreamUrlWithHint(videoId, song.title);
-        if (backendUrl != null && backendUrl.isNotEmpty) {
-          print('[MainScreen] obtained backend stream url: $backendUrl');
-          played = await player.playUrl(backendUrl);
-            if (!played) {
-              // Show backend-provided error details if available
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('Playback failed: backend provided stream but player could not load it')),
-              );
-            }
-        }
+    // song.id is the YouTube videoId from search results
+    // Resolve stream directly on device using youtube_explode_dart
+    print('[MainScreen] playing song: ${song.title} (${song.id})');
 
-        // If backend didn't provide stream, and we're on a non-web platform, try client-side resolver
-        if (!played) {
-          played = await player.playYoutubeVideo(videoId);
-        }
-      }
-      if (!played && mounted) {
-        final msg = 'Playback failed: no stream URL available. On Web this requires a backend stream proxy.';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(msg)),
-        );
-      }
+    final played = await _player.playYoutubeVideo(song.id);
+
+    if (!played && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Playback failed: could not load this song'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
