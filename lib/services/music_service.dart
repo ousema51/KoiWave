@@ -50,6 +50,26 @@ class MusicService {
     return null;
   }
 
+  /// Try to get a stream URL for [songId]. If [titleHint] is provided,
+  /// ask the backend to use the search-based resolver which is more reliable
+  /// for music entries and avoids consent/cookie issues.
+  Future<String?> getStreamUrlWithHint(String songId, String? titleHint) async {
+    // First try direct video id resolution
+    String? url = await getStreamUrl(songId);
+    if (url != null && url.isNotEmpty) return url;
+
+    // If we have a title hint, call backend with q param to use search-based resolver
+    if (titleHint != null && titleHint.isNotEmpty) {
+      final encoded = Uri.encodeComponent(titleHint);
+      final result = await _api.get('/music/stream/$songId?q=$encoded');
+      if (result['success'] == true && result['data'] != null) {
+        final data = result['data'];
+        return data['stream_url'] as String? ?? data['streamUrl'] as String?;
+      }
+    }
+    return null;
+  }
+
   Future<Album?> getAlbum(String albumId) async {
     final result = await _api.get('/music/album/$albumId');
     if (result['success'] == true && result['data'] != null) {

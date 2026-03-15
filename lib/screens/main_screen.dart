@@ -48,21 +48,19 @@ class _MainScreenState extends State<MainScreen> {
         );
       }
     } else {
-      // Try resolving YouTube stream client-side using PlayerService
+      // Try resolving YouTube stream via backend search-based resolver first
       final videoId = song.id;
       print('[MainScreen] no backend streamUrl, will try video id: $videoId');
       bool played = false;
       if (videoId != null && videoId.isNotEmpty) {
-        // If running on Web, youtube_explode_dart cannot fetch YouTube streams due to CORS.
-        if (true) {
-          // Try backend stream endpoint first (works on Web because backend can fetch yt-dlp)
-          final backendUrl = await MusicService().getStreamUrl(videoId);
-          if (backendUrl != null && backendUrl.isNotEmpty) {
-            print('[MainScreen] obtained backend stream url: $backendUrl');
-            played = await player.playUrl(backendUrl);
-          }
+        // Try backend search-based resolver using song title as a hint (avoids cookie prompts)
+        final backendUrl = await MusicService().getStreamUrlWithHint(videoId, song.title);
+        if (backendUrl != null && backendUrl.isNotEmpty) {
+          print('[MainScreen] obtained backend stream url: $backendUrl');
+          played = await player.playUrl(backendUrl);
         }
-        // If backend didn't provide stream, try client-side resolver (non-web only)
+
+        // If backend didn't provide stream, and we're on a non-web platform, try client-side resolver
         if (!played) {
           played = await player.playYoutubeVideo(videoId);
         }

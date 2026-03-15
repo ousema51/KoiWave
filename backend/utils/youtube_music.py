@@ -18,11 +18,8 @@ import requests
 import re
 import json
 import os
-import tempfile
-import base64
 
-_TEMP_COOKIE_FILE = None
-
+# Initialize ytmusicapi client if available
 ytmusic = None
 if _YT_AVAILABLE:
     try:
@@ -35,7 +32,6 @@ if _YT_AVAILABLE:
 
 def search_songs(query, page=1, limit=20):
     try:
-        # ytmusic.search returns a list of results; use page/limit to slice
         if ytmusic:
             results = ytmusic.search(query, filter="songs") or []
         else:
@@ -53,7 +49,7 @@ def search_songs(query, page=1, limit=20):
                 "thumbnail": (r.get("thumbnails") and len(r.get("thumbnails")) > 0 and r.get("thumbnails")[-1].get("url")) or None
             })
 
-        # If ytmusic returned no results, try a lightweight fallback using yt_dlp
+        # Fallback to yt-dlp search if no results
         if not songs and _YTDLP_AVAILABLE and yt_dlp is not None:
             try:
                 query_str = f"ytsearch{limit}:{query}"
@@ -72,24 +68,18 @@ def search_songs(query, page=1, limit=20):
                     })
             except Exception as _e:
                 print(f"[youtube_music] yt_dlp fallback failed: {_e}", flush=True)
-                # ignore fallback errors and return whatever we have
-                pass
 
-        # If still no songs, try scraping YouTube search results page (minimal, relies on public HTML)
+        # Last-resort HTML scraping (best-effort)
         if not songs:
             try:
                 url = f"https://www.youtube.com/results?search_query={requests.utils.requote_uri(query)}"
                 resp = requests.get(url, timeout=6)
                 html = resp.text
-                # Extract the ytInitialData JSON blob
                 m = re.search(r"var ytInitialData = (\{.*?\});", html)
                 if not m:
                     m = re.search(r"window\[\"ytInitialData\"\] = (\{.*?\});", html)
                 if m:
                     data = json.loads(m.group(1))
-                    # Traverse to contents -> twoColumnSearchResultsRenderer -> primaryContents
-                    contents = data.get('contents') or {}
-                    # This structure can vary; try to find videoRenderer nodes
                     def find_video_renderers(obj):
                         results = []
                         if isinstance(obj, dict):
@@ -102,7 +92,6 @@ def search_songs(query, page=1, limit=20):
                             for item in obj:
                                 results.extend(find_video_renderers(item))
                         return results
-
                     video_nodes = find_video_renderers(data)
                     songs = []
                     for v in video_nodes[start:end]:
@@ -113,8 +102,6 @@ def search_songs(query, page=1, limit=20):
                         thumbnails = v.get('thumbnail', {}).get('thumbnails') if v.get('thumbnail') else None
                         if thumbnails:
                             thumbnail = thumbnails[-1].get('url')
-                        artists = None
-                        # uploader info
                         owner_text = v.get('ownerText', {}).get('runs') if v.get('ownerText') else None
                         artist = owner_text[0].get('text') if owner_text else None
                         songs.append({
@@ -126,7 +113,6 @@ def search_songs(query, page=1, limit=20):
                         })
             except Exception as _e:
                 print(f"[youtube_music] html fallback failed: {_e}", flush=True)
-                pass
 
         return {"success": True, "data": songs}
     except Exception as e:
@@ -135,15 +121,13 @@ def search_songs(query, page=1, limit=20):
 
 def get_song_by_id(video_id):
     url = f"https://www.youtube.com/watch?v={video_id}"
-
-    ydl_opts = {
-        "format": "bestaudio",
-        "quiet": True
-    }
-
+    ydl_opts = {"format": "bestaudio", "quiet": True}
     if _YTDLP_AVAILABLE and yt_dlp is not None:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception as e:
+            return {"success": False, "message": str(e)}
     else:
         return {"success": False, "message": "yt_dlp not available on server"}
 
@@ -161,132 +145,49 @@ def get_song_by_id(video_id):
 
 def get_stream_url(video_id):
     """Return a playable audio stream URL for the given YouTube video id.
-    Uses yt_dlp on the server. Returns {'success': True, 'data': {'stream_url': url}} or error.
+    Tries music.youtube.com then www.youtube.com, then a ytmusicapi search fallback.
     """
     if _YTDLP_AVAILABLE and yt_dlp is not None:
-        temp_cookie_path = None
         try:
-            # Try music.youtube.com first (better for official music uploads), then fallback to youtube.com
             candidates = [
                 f"https://music.youtube.com/watch?v={video_id}",
                 f"https://www.youtube.com/watch?v={video_id}"
             ]
-
-            # Prepare cookie handling (support path, raw content, or base64 content)
-            cookies_path = os.environ.get("YTDLP_COOKIES_PATH")
-            cookies_content = os.environ.get("YTDLP_COOKIES_CONTENT")
-            if not cookies_content:
-                cookies_b64 = os.environ.get("YTDLP_COOKIES_CONTENT_B64")
-                if cookies_b64:
-                    try:
-                        cookies_content = base64.b64decode(cookies_b64).decode("utf-8")
-                    except Exception:
-                        cookies_content = None
-
-            # Helper to run yt-dlp on a URL with prepared options
-            def _run_ydl_extract(target_url, cookiefile=None):
-                ydl_opts = {"format": "bestaudio", "quiet": True}
-                if cookiefile:
-                    ydl_opts["cookiefile"] = cookiefile
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    return ydl.extract_info(target_url, download=False)
-
-            last_exception = None
-            # If a cookie file path is provided, prefer using it
-            if cookies_path:
+            for url in candidates:
                 try:
-                    for url in candidates:
-                        info = _run_ydl_extract(url, cookiefile=cookies_path)
-                        stream_url = info.get('url')
-                        if stream_url:
-                            return {"success": True, "data": {"stream_url": stream_url}}
-                except Exception as e:
-                    last_exception = e
-
-            # If cookie content is supplied via env, write temp file and use it
-            if cookies_content and not cookies_path:
-                fd, temp_cookie_path = tempfile.mkstemp(prefix="yt_cookies_", suffix=".txt")
-                try:
-                    with os.fdopen(fd, "w", encoding="utf-8") as f:
-                        f.write(cookies_content)
-                    for url in candidates:
-                        try:
-                            info = _run_ydl_extract(url, cookiefile=temp_cookie_path)
-                            stream_url = info.get('url')
-                            if stream_url:
-                                return {"success": True, "data": {"stream_url": stream_url}}
-                        except Exception as e:
-                            last_exception = e
-                finally:
-                    # will be cleaned up in finally block below
+                    ydl_opts = {"format": "bestaudio", "quiet": True}
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        info = ydl.extract_info(url, download=False)
+                    stream_url = info.get('url')
+                    if stream_url:
+                        return {"success": True, "data": {"stream_url": stream_url}}
+                except Exception:
                     pass
 
-            # Try without cookies (best-effort) — many music videos work without cookies
-            try:
-                for url in candidates:
-                    try:
-                        info = _run_ydl_extract(url, cookiefile=None)
-                        stream_url = info.get('url')
-                        if stream_url:
-                            return {"success": True, "data": {"stream_url": stream_url}}
-                    except Exception as e:
-                        last_exception = e
-            except Exception as e:
-                last_exception = e
-
-            # If we reach here, attempt a safer search-based approach using ytmusicapi
-            if ytmusic and video_id:
+            # Fallback: use ytmusicapi to find a music entry and try extracting from that
+            if ytmusic:
                 try:
-                    # Try to find a music search result that matches this video id
-                    # Search for the video id string itself (sometimes yields the music entry)
                     results = ytmusic.search(video_id, filter="songs") or []
                     if results:
-                        # pick the first music result
                         first = results[0]
                         vid = first.get('videoId')
-                        if vid and vid != video_id:
-                            for base in [f"https://music.youtube.com/watch?v={vid}", f"https://www.youtube.com/watch?v={vid}"]:
-                                try:
-                                    info = _run_ydl_extract(base, cookiefile=None)
-                                    stream_url = info.get('url')
-                                    if stream_url:
-                                        return {"success": True, "data": {"stream_url": stream_url}}
-                                except Exception as e:
-                                    last_exception = e
-                except Exception as e:
-                    last_exception = e
+                        if vid:
+                            url = f"https://www.youtube.com/watch?v={vid}"
+                            try:
+                                ydl_opts = {"format": "bestaudio", "quiet": True}
+                                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                                    info = ydl.extract_info(url, download=False)
+                                stream_url = info.get('url')
+                                if stream_url:
+                                    return {"success": True, "data": {"stream_url": stream_url}}
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
 
-            # Final error handling
-            if last_exception:
-                msg = str(last_exception)
-                if "Sign in to confirm you're not a bot" in msg or "cookies" in msg.lower():
-                    advice = (
-                        "Sign in required for this video. Export YouTube cookies from your browser "
-                        "and set the YTDLP_COOKIES_PATH env var on the server to point to the cookies.txt file, "
-                        "or set YTDLP_COOKIES_CONTENT with the file contents if your platform only supports env vars. "
-                        "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for details."
-                    )
-                    return {"success": False, "message": advice}
-                return {"success": False, "message": msg}
             return {"success": False, "message": "Could not resolve stream URL"}
         except Exception as e:
-            msg = str(e)
-            if "Sign in to confirm you're not a bot" in msg or "cookies" in msg.lower():
-                advice = (
-                    "Sign in required for this video. Export YouTube cookies from your browser "
-                    "and set the YTDLP_COOKIES_PATH env var on the server to point to the cookies.txt file, "
-                    "or set YTDLP_COOKIES_CONTENT with the file contents if your platform only supports env vars. "
-                    "See https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp for details."
-                )
-                return {"success": False, "message": advice}
-            return {"success": False, "message": msg}
-        finally:
-            # Clean up any temporary cookie file we created
-            try:
-                if temp_cookie_path and os.path.exists(temp_cookie_path):
-                    os.remove(temp_cookie_path)
-            except Exception:
-                pass
+            return {"success": False, "message": str(e)}
     return {"success": False, "message": "yt_dlp not available on server"}
 
 
@@ -306,6 +207,8 @@ def get_stream_from_search(query, index=0):
     except Exception as e:
         return {"success": False, "message": str(e)}
 
+
+# other search stubs
 
 def search_all(query):
     return search_songs(query)
@@ -328,15 +231,18 @@ def get_artist_by_id(artist_id):
 
 
 def get_trending():
-    results = ytmusic.search("top hits", filter="songs")
-
-    songs = []
-    for r in results[:20]:
-        songs.append({
-            "id": r.get("videoId"),
-            "title": r.get("title"),
-            "artist": r["artists"][0]["name"] if r.get("artists") else None,
-            "thumbnail": r["thumbnails"][-1]["url"] if r.get("thumbnails") else None
-        })
-
-    return {"success": True, "data": songs}
+    if not ytmusic:
+        return {"success": True, "data": []}
+    try:
+        results = ytmusic.search("top hits", filter="songs") or []
+        songs = []
+        for r in results[:20]:
+            songs.append({
+                "id": r.get("videoId"),
+                "title": r.get("title"),
+                "artist": r["artists"][0]["name"] if r.get("artists") else None,
+                "thumbnail": r["thumbnails"][-1]["url"] if r.get("thumbnails") else None
+            })
+        return {"success": True, "data": songs}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
