@@ -1,8 +1,7 @@
 """
-YouTube Music backend — search via ytmusicapi, streams via public APIs.
+YouTube Music backend — search via ytmusicapi, streams via client-side Piped.
 """
 
-import requests
 import logging
 
 logger = logging.getLogger(__name__)
@@ -15,108 +14,7 @@ try:
     from ytmusicapi import YTMusic
     ytmusic = YTMusic()
 except Exception as e:
-    logger.error(f"ytmusicapi failed: {e}")
-
-
-# ---------------------------------------------------------------------------
-# Stream URL resolution
-# ---------------------------------------------------------------------------
-
-def _get_stream_url(video_id):
-    """Try multiple public APIs to get a playable audio URL."""
-
-    piped_instances = [
-        "https://pipedapi.kavin.rocks",
-        "https://pipedapi.adminforge.de",
-        "https://api.piped.yt",
-        "https://pipedapi.r4fo.com",
-        "https://pipedapi.leptons.xyz",
-    ]
-
-    for base in piped_instances:
-        try:
-            resp = requests.get(
-                f"{base}/streams/{video_id}",
-                timeout=8,
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-
-            audio_streams = data.get("audioStreams") or []
-            if not audio_streams:
-                continue
-
-            valid = [s for s in audio_streams if s.get("url")]
-            if not valid:
-                continue
-
-            best = max(valid, key=lambda s: s.get("bitrate") or 0)
-            if best.get("url"):
-                return best["url"]
-
-        except Exception as e:
-            logger.warning(f"Piped {base} failed: {e}")
-            continue
-
-    invidious_instances = [
-        "https://inv.nadeko.net",
-        "https://invidious.fdn.fr",
-        "https://vid.puffyan.us",
-        "https://invidious.nerdvpn.de",
-    ]
-
-    for base in invidious_instances:
-        try:
-            resp = requests.get(
-                f"{base}/api/v1/videos/{video_id}",
-                timeout=8,
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
-            if resp.status_code != 200:
-                continue
-            data = resp.json()
-
-            formats = data.get("adaptiveFormats") or []
-            audio_formats = [
-                f for f in formats
-                if f.get("type", "").startswith("audio/") and f.get("url")
-            ]
-            if not audio_formats:
-                continue
-
-            best = max(audio_formats, key=lambda f: f.get("bitrate") or 0)
-            if best.get("url"):
-                return best["url"]
-
-        except Exception as e:
-            logger.warning(f"Invidious {base} failed: {e}")
-            continue
-
-    try:
-        resp = requests.post(
-            "https://api.cobalt.tools/",
-            json={
-                "url": f"https://youtube.com/watch?v={video_id}",
-                "audioFormat": "mp3",
-                "isAudioOnly": True,
-            },
-            headers={
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-            },
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            url = data.get("url") or data.get("audio")
-            if url:
-                return url
-    except Exception as e:
-        logger.warning(f"Cobalt failed: {e}")
-
-    return None
+    logger.error("ytmusicapi failed: {}".format(e))
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +22,6 @@ def _get_stream_url(video_id):
 # ---------------------------------------------------------------------------
 
 def _get_thumbnail(r):
-    """Extract thumbnail URL from a ytmusicapi result."""
     thumbs = r.get("thumbnails")
     if isinstance(thumbs, list) and thumbs:
         url = thumbs[-1].get("url")
@@ -160,45 +57,52 @@ def _normalize(r):
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Public API — Search
 # ---------------------------------------------------------------------------
 
 def search_songs(query="", page=1, limit=20):
     if not ytmusic:
-        import traceback
-        return {"success": False, "message": "ytmusicapi not available", "traceback": traceback.format_exc()}
+        return {"success": False, "message": "ytmusicapi not available"}
     try:
         start = (page - 1) * limit
         raw = ytmusic.search(query, filter="songs", limit=start + limit) or []
         songs = [_normalize(r) for r in raw[start:start + limit] if r.get("videoId")]
         return {"success": True, "data": songs}
     except Exception as e:
-        import traceback
-        return {"success": False, "message": str(e), "traceback": traceback.format_exc()}
+        return {"success": False, "message": str(e)}
 
 
 def search_all(query=""):
     return search_songs(query)
 
 
+# ---------------------------------------------------------------------------
+# Public API — Stream URL
+# ---------------------------------------------------------------------------
+
+PIPED_INSTANCES = [
+    "https://pipedapi.kavin.rocks",
+    "https://pipedapi.adminforge.de",
+    "https://api.piped.yt",
+    "https://pipedapi.r4fo.com",
+    "https://pipedapi.leptons.xyz",
+]
+
+
 def get_stream_url(video_id=""):
-    import traceback
+    """Return Piped API URL for the frontend to call directly."""
     if not video_id or not video_id.strip():
-        return {"success": False, "message": "No video_id provided", "traceback": traceback.format_exc()}
+        return {"success": False, "message": "No video_id provided"}
 
     video_id = video_id.strip()
-    try:
-        url = _get_stream_url(video_id)
-    except Exception as e:
-        return {"success": False, "message": str(e), "traceback": traceback.format_exc()}
-
-    if url:
-        return {"success": True, "data": {"stream_url": url}}
 
     return {
-        "success": False,
-        "message": "Could not get stream for {}".format(video_id),
-        "traceback": traceback.format_exc(),
+        "success": True,
+        "data": {
+            "video_id": video_id,
+            "piped_instances": PIPED_INSTANCES,
+            "resolve_on_client": True,
+        },
     }
 
 
@@ -228,11 +132,11 @@ def get_song_by_id(video_id=""):
         except Exception:
             pass
 
-    url = _get_stream_url(video_id)
-    if not url:
-        return {"success": False, "message": "Could not get stream for {}".format(video_id)}
-
-    data = {"id": video_id, "stream_url": url}
+    data = {
+        "id": video_id,
+        "piped_instances": PIPED_INSTANCES,
+        "resolve_on_client": True,
+    }
     data.update(meta)
     return {"success": True, "data": data}
 
@@ -243,13 +147,7 @@ def get_stream_from_search(query="", index=0):
         return {"success": False, "message": "No results"}
     songs = result["data"]
     chosen = songs[index] if index < len(songs) else songs[0]
-    stream = get_stream_url(chosen["id"])
-    if stream.get("success"):
-        stream["data"]["id"] = chosen["id"]
-        stream["data"]["title"] = stream["data"].get("title") or chosen.get("title")
-        stream["data"]["artist"] = stream["data"].get("artist") or chosen.get("artist")
-        stream["data"]["thumbnail"] = stream["data"].get("thumbnail") or chosen.get("thumbnail")
-    return stream
+    return get_stream_url(chosen["id"])
 
 
 # ---------------------------------------------------------------------------
@@ -335,13 +233,12 @@ def get_trending():
 
 
 def health_check():
-    """Test everything and report what works."""
     status = {
         "ytmusic": ytmusic is not None,
         "search": False,
-        "stream": False,
+        "stream_method": "client-side piped",
+        "piped_instances": PIPED_INSTANCES,
     }
-
     if ytmusic:
         try:
             r = ytmusic.search("test", filter="songs", limit=1)
@@ -350,8 +247,4 @@ def health_check():
                 status["thumbnail_test"] = _get_thumbnail(r[0])
         except Exception as e:
             status["search_error"] = str(e)
-
-    test_url = _get_stream_url("dQw4w9WgXcQ")
-    status["stream"] = bool(test_url)
-
     return {"success": True, "data": status}
