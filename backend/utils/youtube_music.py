@@ -18,9 +18,7 @@ import json
 import traceback
 import requests
 import re
-import yt_dlp
 from yt_dlp.extractor.common import _InfoDict
-from ytmusicapi import YTMusic
 # Optional dependencies
 _YT_AVAILABLE = False
 _YTDLP_AVAILABLE = False
