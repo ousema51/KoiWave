@@ -58,6 +58,12 @@ class _MainScreenState extends State<MainScreen> {
         if (backendUrl != null && backendUrl.isNotEmpty) {
           print('[MainScreen] obtained backend stream url: $backendUrl');
           played = await player.playUrl(backendUrl);
+            if (!played) {
+              // Show backend-provided error details if available
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Playback failed: backend provided stream but player could not load it')),
+              );
+            }
         }
 
         // If backend didn't provide stream, and we're on a non-web platform, try client-side resolver
@@ -66,8 +72,9 @@ class _MainScreenState extends State<MainScreen> {
         }
       }
       if (!played && mounted) {
+        final msg = 'Playback failed: no stream URL available. On Web this requires a backend stream proxy.';
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Playback failed: no stream URL available. On Web this requires a backend stream proxy.')),
+          SnackBar(content: Text(msg)),
         );
       }
     }

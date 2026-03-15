@@ -56,12 +56,14 @@ class MusicService {
   Future<String?> getStreamUrlWithHint(String songId, String? titleHint) async {
     // First try direct video id resolution
     String? url = await getStreamUrl(songId);
+    print('[MusicService] getStreamUrl direct result for $songId: $url');
     if (url != null && url.isNotEmpty) return url;
 
     // If we have a title hint, call backend with q param to use search-based resolver
     if (titleHint != null && titleHint.isNotEmpty) {
       final encoded = Uri.encodeComponent(titleHint);
       final result = await _api.get('/music/stream/$songId?q=$encoded');
+      print('[MusicService] backend stream result: $result');
       if (result['success'] == true && result['data'] != null) {
         final data = result['data'];
         return data['stream_url'] as String? ?? data['streamUrl'] as String?;

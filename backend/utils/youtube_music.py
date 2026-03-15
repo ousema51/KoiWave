@@ -1,3 +1,12 @@
+"""
+Simple, test.py-style youtube music helper.
+- Uses ytmusicapi.search(..., filter='songs') for music-only search results.
+- Uses yt_dlp to extract a direct audio URL for a given YouTube video id.
+
+This implementation intentionally avoids cookie/consent logic and mirrors the working
+`test.py` flow you provided.
+"""
+
 try:
     from ytmusicapi import YTMusic
     _YT_AVAILABLE = True
@@ -13,14 +22,11 @@ except Exception as _e:
     print(f"[youtube_music] yt_dlp not available: {_e}", flush=True)
     yt_dlp = None
     _YTDLP_AVAILABLE = False
-import traceback
 
 import requests
-import re
-import json
 import os
 
-# Initialize ytmusicapi client if available
+# Initialize YTMusic client if available
 ytmusic = None
 if _YT_AVAILABLE:
     try:
@@ -31,216 +37,106 @@ if _YT_AVAILABLE:
         _YT_AVAILABLE = False
 
 
+def _normalize_song_entry(r):
+    return {
+        "id": r.get("videoId") or r.get("browseId") or r.get("video_id") or r.get("id"),
+        "title": r.get("title"),
+        "artist": (r.get("artists") and len(r.get("artists")) > 0 and r.get("artists")[0].get("name")) or r.get("uploader") or None,
+        "duration": r.get("duration"),
+        "thumbnail": (r.get("thumbnails") and len(r.get("thumbnails")) > 0 and r.get("thumbnails")[-1].get("url")) or r.get("thumbnail") or None,
+    }
+
+
 def search_songs(query, page=1, limit=20):
+    """Return music-only search results (list) in a consistent format.
+    Mirrors test.py behavior: use ytmusicapi.search(filter='songs').
+    """
     try:
+        results = []
         if ytmusic:
-            results = ytmusic.search(query, filter="songs") or []
+            raw = ytmusic.search(query, filter="songs") or []
+            start = max(0, (page - 1) * limit)
+            end = start + limit
+            for r in raw[start:end]:
+                results.append(_normalize_song_entry(r))
         else:
+            # If ytmusicapi is not available, return empty list (caller handles it)
             results = []
-        start = max(0, (page - 1) * limit)
-        end = start + limit
+        return {"success": True, "data": results}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
-        songs = []
-        for r in results[start:end]:
-            songs.append({
-                "id": r.get("videoId") or r.get("browseId") or r.get("video_id"),
-                "title": r.get("title"),
-                "artist": (r.get("artists") and len(r.get("artists")) > 0 and r.get("artists")[0].get("name")) or None,
-                "duration": r.get("duration"),
-                "thumbnail": (r.get("thumbnails") and len(r.get("thumbnails")) > 0 and r.get("thumbnails")[-1].get("url")) or None
-            })
 
-        # Fallback to yt-dlp search if no results
-        if not songs and _YTDLP_AVAILABLE and yt_dlp is not None:
-            try:
-                query_str = f"ytsearch{limit}:{query}"
-                ydl_opts = {"quiet": True, "skip_download": True}
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(query_str, download=False)
-                entries = info.get('entries') or []
-                songs = []
-                for e in entries[start:end]:
-                    songs.append({
-                        "id": e.get("id") or e.get("webpage_url") or e.get("url"),
-                        "title": e.get("title"),
-                        "artist": (e.get("uploader") or e.get("artist")),
-                        "duration": e.get("duration"),
-                        "thumbnail": e.get("thumbnail")
-                    })
-            except Exception as _e:
-                print(f"[youtube_music] yt_dlp fallback failed: {_e}", flush=True)
+def get_stream_url(video_id):
+    """Extract a playable audio URL for a YouTube video id using yt-dlp.
 
-        # Last-resort HTML scraping (best-effort)
-        if not songs:
-            try:
-                url = f"https://www.youtube.com/results?search_query={requests.utils.requote_uri(query)}"
-                resp = requests.get(url, timeout=6)
-                html = resp.text
-                m = re.search(r"var ytInitialData = (\{.*?\});", html)
-                if not m:
-                    m = re.search(r"window\[\"ytInitialData\"\] = (\{.*?\});", html)
-                if m:
-                    data = json.loads(m.group(1))
-                    def find_video_renderers(obj):
-                        results = []
-                        if isinstance(obj, dict):
-                            for k, v in obj.items():
-                                if k == 'videoRenderer' and isinstance(v, dict):
-                                    results.append(v)
-                                else:
-                                    results.extend(find_video_renderers(v))
-                        elif isinstance(obj, list):
-                            for item in obj:
-                                results.extend(find_video_renderers(item))
-                        return results
-                    video_nodes = find_video_renderers(data)
-                    songs = []
-                    for v in video_nodes[start:end]:
-                        vid = v.get('videoId')
-                        title_runs = v.get('title', {}).get('runs') or []
-                        title = title_runs[0].get('text') if title_runs else v.get('title', {}).get('simpleText')
-                        thumbnail = None
-                        thumbnails = v.get('thumbnail', {}).get('thumbnails') if v.get('thumbnail') else None
-                        if thumbnails:
-                            thumbnail = thumbnails[-1].get('url')
-                        owner_text = v.get('ownerText', {}).get('runs') if v.get('ownerText') else None
-                        artist = owner_text[0].get('text') if owner_text else None
-                        songs.append({
-                            'id': vid,
-                            'title': title,
-                            'artist': artist,
-                            'duration': None,
-                            'thumbnail': thumbnail
-                        })
-            except Exception as _e:
-                print(f"[youtube_music] html fallback failed: {_e}", flush=True)
+    This follows the `test.py` flow: build the watch URL, run yt_dlp.extract_info(..., download=False)
+    and return `info['url']` when available. If not present, try to select an audio format.
+    """
+    if not _YTDLP_AVAILABLE or yt_dlp is None:
+        return {"success": False, "message": "yt_dlp not available on server"}
 
-        return {"success": True, "data": songs}
+    try:
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        ydl_opts = {"format": "bestaudio", "quiet": True, "skip_download": True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+
+        # Direct URL (works for many videos)
+        if info is None:
+            return {"success": False, "message": "yt-dlp returned no info"}
+
+        stream = info.get("url")
+        if stream:
+            return {"success": True, "data": {"stream_url": stream}}
+
+        # Otherwise pick a best audio format from formats
+        formats = info.get("formats") or info.get("requested_formats") or []
+        if formats:
+            # Prefer audio-only formats with highest abr
+            best = None
+            best_abr = -1
+            for f in formats:
+                abr = f.get("abr") or f.get("tbr") or 0
+                vcodec = f.get("vcodec")
+                acodec = f.get("acodec")
+                is_audio_only = (vcodec in (None, "none", "unknown") or vcodec == "none") and acodec not in (None, "none")
+                score = int(abr) if abr else 0
+                if is_audio_only:
+                    score += 10000
+                if score > best_abr:
+                    best_abr = score
+                    best = f
+            if best and best.get("url"):
+                return {"success": True, "data": {"stream_url": best.get("url")}}
+
+        return {"success": False, "message": "Could not resolve stream URL"}
     except Exception as e:
         return {"success": False, "message": str(e)}
 
 
 def get_song_by_id(video_id):
-    url = f"https://www.youtube.com/watch?v={video_id}"
-    ydl_opts = {"format": "bestaudio", "quiet": True}
-    if _YTDLP_AVAILABLE and yt_dlp is not None:
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-        except Exception as e:
-            return {"success": False, "message": str(e)}
-    else:
-        return {"success": False, "message": "yt_dlp not available on server"}
-
-    return {
-        "success": True,
-        "data": {
-            "id": video_id,
-            "title": info.get("title"),
-            "duration": info.get("duration"),
-            "thumbnail": info.get("thumbnail"),
-            "stream_url": info.get("url")
-        }
-    }
-
-
-def get_stream_url(video_id):
-    """Return a playable audio stream URL for the given YouTube video id.
-    Tries music.youtube.com then www.youtube.com, then a ytmusicapi search fallback.
-    """
-    if _YTDLP_AVAILABLE and yt_dlp is not None:
-        try:
-            candidates = [
-                f"https://music.youtube.com/watch?v={video_id}",
-                f"https://www.youtube.com/watch?v={video_id}"
-            ]
-            attempt_results = []
-            for url in candidates:
-                attempt = {"url": url, "success": False, "error": None, "formats_count": 0}
-                try:
-                    print(f"[youtube_music] attempting extraction for: {url}", flush=True)
-                    ydl_opts = {"format": "bestaudio", "quiet": True}
-                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                        info = ydl.extract_info(url, download=False)
-
-                    # Log some info keys for debugging
-                    try:
-                        attempt["info_keys"] = list(info.keys())
-                    except Exception:
-                        attempt["info_keys"] = []
-
-                    # Prefer direct 'url' if present
-                    stream_url = info.get('url')
-                    if stream_url:
-                        attempt["success"] = True
-                        attempt["selected"] = "direct"
-                        attempt_results.append(attempt)
-                        print(f"[youtube_music] extracted direct url", flush=True)
-                        return {"success": True, "data": {"stream_url": stream_url}}
-
-                    # Otherwise inspect formats to pick best audio
-                    formats = info.get('formats') or info.get('requested_formats') or []
-                    attempt["formats_count"] = len(formats) if formats else 0
-                    best = None
-                    best_score = -1
-                    for f in formats:
-                        abr = f.get('abr') or f.get('tbr') or 0
-                        acodec = f.get('acodec')
-                        vcodec = f.get('vcodec')
-                        is_audio_only = (vcodec in (None, 'none', 'unknown') or vcodec == 'none') and acodec not in (None, 'none')
-                        score = int(abr) if abr else 0
-                        if is_audio_only:
-                            score += 10000
-                        if score > best_score:
-                            best_score = score
-                            best = f
-                    if best:
-                        attempt["selected"] = "format"
-                        attempt["selected_format"] = {"format_id": best.get('format_id'), "abr": best.get('abr'), "has_url": bool(best.get('url'))}
-                        attempt_results.append(attempt)
-                        stream_url = best.get('url')
-                        if stream_url:
-                            print(f"[youtube_music] selected format url from formats", flush=True)
-                            return {"success": True, "data": {"stream_url": stream_url}}
-                    attempt_results.append(attempt)
-                except Exception as e:
-                    attempt["error"] = str(e)
-                    attempt_results.append(attempt)
-                    print(f"[youtube_music] extraction failed for {url}: {e}", flush=True)
-                    print(traceback.format_exc(), flush=True)
-                    pass
-
-            # Fallback: use ytmusicapi to find a music entry and try extracting from that
-            if ytmusic:
-                try:
-                    results = ytmusic.search(video_id, filter="songs") or []
-                    if results:
-                        first = results[0]
-                        vid = first.get('videoId')
-                        if vid:
-                            url = f"https://www.youtube.com/watch?v={vid}"
-                            try:
-                                ydl_opts = {"format": "bestaudio", "quiet": True}
-                                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                                    info = ydl.extract_info(url, download=False)
-                                stream_url = info.get('url')
-                                if stream_url:
-                                    return {"success": True, "data": {"stream_url": stream_url}}
-                            except Exception:
-                                pass
-                except Exception:
-                    pass
-
-            # If we reach here, no candidate produced a usable stream
-            return {"success": False, "message": "Could not resolve stream URL", "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
-        except Exception as e:
-            return {"success": False, "message": str(e), "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
-    # yt-dlp not available
-    return {"success": False, "message": "yt_dlp not available on server", "details": {"yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
+    """Return song metadata and attempt to include a stream_url when possible."""
+    try:
+        meta = {"id": video_id}
+        # Try to fetch metadata via ytmusicapi if available
+        if ytmusic:
+            # ytmusic.get_song is not always available; search for the id
+            results = ytmusic.search(video_id, filter="songs") or []
+            if results:
+                r = results[0]
+                meta.update(_normalize_song_entry(r))
+        # Try to attach a stream URL (best-effort)
+        stream_res = get_stream_url(video_id)
+        if stream_res.get("success"):
+            meta["stream_url"] = stream_res["data"]["stream_url"]
+        return {"success": True, "data": meta}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 def get_stream_from_search(query, index=0):
-    """Search YouTube Music for `query` (songs) and return a stream URL for the chosen result index."""
+    """Search for a music result (ytmusicapi) and return a stream URL for the chosen index."""
     if not ytmusic:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
@@ -248,7 +144,7 @@ def get_stream_from_search(query, index=0):
         if not results:
             return {"success": False, "message": "No song results found"}
         chosen = results[index] if index < len(results) else results[0]
-        vid = chosen.get('videoId')
+        vid = chosen.get("videoId")
         if not vid:
             return {"success": False, "message": "No videoId found for chosen song"}
         return get_stream_url(vid)
@@ -256,7 +152,7 @@ def get_stream_from_search(query, index=0):
         return {"success": False, "message": str(e)}
 
 
-# other search stubs
+# minimal stubs to satisfy routes
 
 def search_all(query):
     return search_songs(query)
@@ -285,12 +181,7 @@ def get_trending():
         results = ytmusic.search("top hits", filter="songs") or []
         songs = []
         for r in results[:20]:
-            songs.append({
-                "id": r.get("videoId"),
-                "title": r.get("title"),
-                "artist": r["artists"][0]["name"] if r.get("artists") else None,
-                "thumbnail": r["thumbnails"][-1]["url"] if r.get("thumbnails") else None
-            })
+            songs.append(_normalize_song_entry(r))
         return {"success": True, "data": songs}
     except Exception as e:
         return {"success": False, "message": str(e)}

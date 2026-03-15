@@ -13,7 +13,12 @@ class PlayerService {
   Future<bool> playUrl(String url) async {
     try {
       print('[PlayerService] playUrl: $url');
-      await player.setUrl(url);
+      try {
+        await player.setAudioSource(AudioSource.uri(Uri.parse(url)));
+      } catch (_) {
+        // Fallback to setUrl for older just_audio versions/platform quirks
+        await player.setUrl(url);
+      }
       await player.play();
       return true;
     } catch (e, st) {
