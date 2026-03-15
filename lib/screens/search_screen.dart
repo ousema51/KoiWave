@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dart:async';
 import '../models/song.dart';
 import '../models/album.dart';
 import '../models/artist.dart';
@@ -20,6 +21,7 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreenState extends State<SearchScreen> {
   final _searchController = TextEditingController();
   final MusicService _musicService = MusicService();
+  Timer? _debounce;
 
   List<Song> _songResults = [];
   List<Album> _albumResults = [];
@@ -45,6 +47,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
   @override
   void dispose() {
+    _debounce?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -101,7 +104,11 @@ class _SearchScreenState extends State<SearchScreen> {
               controller: _searchController,
               style: const TextStyle(color: Colors.white),
               onChanged: (value) {
-                Future.delayed(const Duration(milliseconds: 500), () {
+                // Update UI (clear button) immediately
+                if (mounted) setState(() {});
+                // Debounce the search calls
+                _debounce?.cancel();
+                _debounce = Timer(const Duration(milliseconds: 500), () {
                   if (_searchController.text == value) {
                     _search(value);
                   }
@@ -119,6 +126,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             color: Colors.grey[400]),
                         onPressed: () {
                           _searchController.clear();
+                          if (mounted) setState(() {});
                           _search('');
                         },
                       )

@@ -30,18 +30,45 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _loadAndPlay(Song song) async {
     // song.id is the YouTube videoId from search results
-    // Resolve stream directly on device using youtube_explode_dart
     print('[MainScreen] playing song: ${song.title} (${song.id})');
 
-    final played = await _player.playYoutubeVideo(song.id);
+    // Refresh metadata (thumbnail, duration) from backend when available
+    try {
+      final fresh = await MusicService().getSong(song.id);
+      if (fresh != null && mounted) setState(() => _currentSong = fresh);
+    } catch (_) {}
 
-    if (!played && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Playback failed: could not load this song'),
-          backgroundColor: Colors.red,
-        ),
-      );
+    // Try to obtain backend-resolved stream URL first
+    try {
+      final url = await MusicService().getStreamUrlWithHint(song.id, song.title);
+      bool played = false;
+      if (url != null && url.isNotEmpty) {
+        played = await _player.playUrl(url);
+      }
+
+      // Fallback: resolve on device if backend failed
+      if (!played) {
+        played = await _player.playYoutubeVideo(song.id);
+      }
+
+      if (!played && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Playback failed: could not load this song'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      print('[MainScreen] _loadAndPlay error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Playback error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 

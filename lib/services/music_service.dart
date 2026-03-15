@@ -54,12 +54,26 @@ class MusicService {
 
   // --- Stream URL (resolved on device, not backend) ---
   Future<String?> getStreamUrl(String songId) async {
+    // Prefer backend-resolved stream URL when available
+    final res = await _api.get('/music/stream/$songId');
+    if (res['success'] == true && res['data'] != null) {
+      return (res['data']['stream_url'] ?? res['data']['streamUrl'])?.toString();
+    }
+    // Fallback to device resolver
     return _player.resolveStreamUrl(songId);
   }
 
   Future<String?> getStreamUrlWithHint(
       String songId, String? titleHint) async {
-    // Resolve directly on device — no backend needed
+    // Try backend stream resolver with optional title hint to improve accuracy
+    final q = titleHint != null && titleHint.isNotEmpty
+        ? '?q=${Uri.encodeComponent(titleHint)}'
+        : '';
+    final res = await _api.get('/music/stream/$songId$q');
+    if (res['success'] == true && res['data'] != null) {
+      return (res['data']['stream_url'] ?? res['data']['streamUrl'])?.toString();
+    }
+    // Fallback to device resolver
     return _player.resolveStreamUrl(songId);
   }
 
