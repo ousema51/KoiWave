@@ -18,7 +18,9 @@ import json
 import traceback
 import requests
 import re
-
+import yt_dlp
+from yt_dlp.extractor.common import _InfoDict
+from ytmusicapi import YTMusic
 # Optional dependencies
 _YT_AVAILABLE = False
 _YTDLP_AVAILABLE = False
@@ -237,8 +239,11 @@ def get_stream_url(video_id: str) -> dict:
         except Exception:
             pass
 
-    return {"success": False, "message": "Could not resolve stream URL", "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
-
+    #return {"success": False, "message": "Could not resolve stream URL", "details": {"attempts": attempt_results, "yt_dlp_available": _YTDLP_AVAILABLE, "ytmusic_available": _YT_AVAILABLE}}
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
+        audio_url = info["url"]
+    return {audio_url}
 
 def get_stream_from_search(query: str, index: int = 0) -> dict:
     if not ytmusic:
