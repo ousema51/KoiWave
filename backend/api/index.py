@@ -1,6 +1,8 @@
 import sys
 import os
 
+from backend.utils.youtube_music import health_check
+
 # Make the backend root importable when running from api/
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -52,7 +54,8 @@ def health():
         db.get_db().command("ping")
         return jsonify({"success": True, "message": "OK", "db": "connected"}), 200
     except Exception as exc:
-        return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
+        return jsonify(health_check())
+        #return jsonify({"success": True, "message": "OK", "db": f"error: {str(exc)}"}), 200
 
 
 @app.errorhandler(404)
