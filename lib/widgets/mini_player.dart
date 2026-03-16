@@ -51,6 +51,18 @@ class _MiniPlayerState extends State<MiniPlayer>
       _progressController.reset();
       _isPlaying = false;
       _checkLiked();
+      if (widget.currentSong != null) {
+        _player.playYoutubeVideo(widget.currentSong!.id).then((success) {
+          if (!success && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Failed to play song'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        });
+      }
     }
   }
 
@@ -124,8 +136,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                     child: SizedBox(
                       width: 48,
                       height: 48,
-                      child: song?.coverUrl != null &&
-                              song!.coverUrl!.isNotEmpty
+                      child:
+                          song?.coverUrl != null && song!.coverUrl!.isNotEmpty
                           ? CachedNetworkImage(
                               imageUrl: song.coverUrl!,
                               placeholder: (context, url) =>
@@ -134,15 +146,18 @@ class _MiniPlayerState extends State<MiniPlayer>
                                 decoration: const BoxDecoration(
                                   gradient: LinearGradient(
                                     colors: [
-                                        Color(0xFF0B3B8C),
-                                          Color(0xFF148A3D)
+                                      Color(0xFF0B3B8C),
+                                      Color(0xFF148A3D),
                                     ],
                                     begin: Alignment.topLeft,
                                     end: Alignment.bottomRight,
                                   ),
                                 ),
-                                child: const Icon(Icons.music_note_rounded,
-                                    color: Colors.white, size: 24),
+                                child: const Icon(
+                                  Icons.music_note_rounded,
+                                  color: Colors.white,
+                                  size: 24,
+                                ),
                               ),
                               fit: BoxFit.cover,
                             )
@@ -150,15 +165,18 @@ class _MiniPlayerState extends State<MiniPlayer>
                               decoration: const BoxDecoration(
                                 gradient: LinearGradient(
                                   colors: [
-                                      Color(0xFF0B3B8C),
-                                        Color(0xFF148A3D)
+                                    Color(0xFF0B3B8C),
+                                    Color(0xFF148A3D),
                                   ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
                                 ),
                               ),
-                              child: const Icon(Icons.music_note_rounded,
-                                  color: Colors.white, size: 24),
+                              child: const Icon(
+                                Icons.music_note_rounded,
+                                color: Colors.white,
+                                size: 24,
+                              ),
                             ),
                     ),
                   ),
@@ -186,9 +204,10 @@ class _MiniPlayerState extends State<MiniPlayer>
                           Text(
                             artist,
                             style: TextStyle(
-                                color: Colors.grey[400],
-                                fontSize: 12,
-                                letterSpacing: 0.1),
+                              color: Colors.grey[400],
+                              fontSize: 12,
+                              letterSpacing: 0.1,
+                            ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -202,7 +221,7 @@ class _MiniPlayerState extends State<MiniPlayer>
                       duration: const Duration(milliseconds: 200),
                       transitionBuilder: (child, anim) =>
                           ScaleTransition(scale: anim, child: child),
-                        child: Icon(
+                      child: Icon(
                         _isLiked ? Icons.favorite : Icons.favorite_border,
                         key: ValueKey(_isLiked),
                         color: _isLiked
@@ -214,8 +233,10 @@ class _MiniPlayerState extends State<MiniPlayer>
                     onPressed: song != null ? _toggleLike : null,
                     splashRadius: 20,
                     padding: EdgeInsets.zero,
-                    constraints:
-                        const BoxConstraints(minWidth: 36, minHeight: 36),
+                    constraints: const BoxConstraints(
+                      minWidth: 36,
+                      minHeight: 36,
+                    ),
                   ),
 
                   // Play/Pause button
@@ -263,8 +284,7 @@ class _MiniPlayerState extends State<MiniPlayer>
                   child: Align(
                     alignment: Alignment.centerLeft,
                     child: FractionallySizedBox(
-                      widthFactor:
-                          _progressController.value.clamp(0.0, 1.0),
+                      widthFactor: _progressController.value.clamp(0.0, 1.0),
                       child: Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(2),

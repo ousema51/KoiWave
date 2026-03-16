@@ -9,11 +9,7 @@ class FullPlayerScreen extends StatefulWidget {
   final VoidCallback onClose;
   final Song? currentSong;
 
-  const FullPlayerScreen({
-    super.key,
-    required this.onClose,
-    this.currentSong,
-  });
+  const FullPlayerScreen({super.key, required this.onClose, this.currentSong});
 
   @override
   State<FullPlayerScreen> createState() => _FullPlayerScreenState();
@@ -39,13 +35,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
       vsync: this,
       duration: const Duration(milliseconds: 400),
     );
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 1),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(
-      parent: _slideController,
-      curve: Curves.easeOutCubic,
-    ));
+    _slideAnimation = Tween<Offset>(begin: const Offset(0, 1), end: Offset.zero)
+        .animate(
+          CurvedAnimation(parent: _slideController, curve: Curves.easeOutCubic),
+        );
     _slideController.forward();
     _checkLiked();
     _playingSub = _player.playingStream.listen((playing) {
@@ -60,6 +53,18 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
       _currentSliderValue = 0.0;
       _isPlaying = false;
       _checkLiked();
+      if (widget.currentSong != null) {
+        _player.playYoutubeVideo(widget.currentSong!.id).then((success) {
+          if (!success && mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Failed to play song'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+        });
+      }
     }
   }
 
@@ -118,11 +123,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
         body: Container(
           decoration: const BoxDecoration(
             gradient: LinearGradient(
-              colors: [
-                Color(0xFF1A3A2A),
-                Color(0xFF0D1B14),
-                Color(0xFF121212)
-              ],
+              colors: [Color(0xFF1A3A2A), Color(0xFF0D1B14), Color(0xFF121212)],
               begin: Alignment.topCenter,
               end: Alignment.bottomCenter,
               stops: [0.0, 0.4, 0.8],
@@ -140,8 +141,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         IconButton(
-                          icon: const Icon(Icons.keyboard_arrow_down_rounded,
-                              size: 32, color: Colors.white),
+                          icon: const Icon(
+                            Icons.keyboard_arrow_down_rounded,
+                            size: 32,
+                            color: Colors.white,
+                          ),
                           onPressed: _close,
                         ),
                         Column(
@@ -167,8 +171,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                           ],
                         ),
                         IconButton(
-                          icon: Icon(Icons.more_vert_rounded,
-                              color: Colors.grey[300]),
+                          icon: Icon(
+                            Icons.more_vert_rounded,
+                            color: Colors.grey[300],
+                          ),
                           onPressed: () {},
                         ),
                       ],
@@ -198,8 +204,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       ],
                     ),
                     clipBehavior: Clip.antiAlias,
-                    child: song?.coverUrl != null &&
-                            song!.coverUrl!.isNotEmpty
+                    child: song?.coverUrl != null && song!.coverUrl!.isNotEmpty
                         ? CachedNetworkImage(
                             imageUrl: song.coverUrl!,
                             placeholder: (context, url) => Container(
@@ -207,7 +212,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                                 gradient: LinearGradient(
                                   colors: [
                                     Color(0xFF0B3B8C),
-                                    Color(0xFF0A5C2B)
+                                    Color(0xFF0A5C2B),
                                   ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
@@ -215,7 +220,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                               ),
                               child: const Center(
                                 child: CircularProgressIndicator(
-                                    color: Colors.white),
+                                  color: Colors.white,
+                                ),
                               ),
                             ),
                             errorWidget: (context, url, error) => Container(
@@ -223,15 +229,18 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                                 gradient: LinearGradient(
                                   colors: [
                                     Color(0xFF0B3B8C),
-                                    Color(0xFF0A5C2B)
+                                    Color(0xFF0A5C2B),
                                   ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
                                 ),
                               ),
                               child: const Center(
-                                child: Icon(Icons.music_note_rounded,
-                                    color: Colors.white70, size: 80),
+                                child: Icon(
+                                  Icons.music_note_rounded,
+                                  color: Colors.white70,
+                                  size: 80,
+                                ),
                               ),
                             ),
                             fit: BoxFit.cover,
@@ -239,17 +248,17 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                         : Container(
                             decoration: const BoxDecoration(
                               gradient: LinearGradient(
-                                colors: [
-                                  Color(0xFF0B3B8C),
-                                  Color(0xFF0A5C2B)
-                                ],
+                                colors: [Color(0xFF0B3B8C), Color(0xFF0A5C2B)],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,
                               ),
                             ),
                             child: const Center(
-                              child: Icon(Icons.music_note_rounded,
-                                  color: Colors.white70, size: 80),
+                              child: Icon(
+                                Icons.music_note_rounded,
+                                color: Colors.white70,
+                                size: 80,
+                              ),
                             ),
                           ),
                   ),
@@ -295,12 +304,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                           transitionBuilder: (child, anim) =>
                               ScaleTransition(scale: anim, child: child),
                           child: Icon(
-                            _isLiked
-                                ? Icons.favorite
-                                : Icons.favorite_border,
+                            _isLiked ? Icons.favorite : Icons.favorite_border,
                             key: ValueKey(_isLiked),
                             color: _isLiked
-                              ? const Color(0xFF0B3B8C)
+                                ? const Color(0xFF0B3B8C)
                                 : Colors.grey[400],
                             size: 28,
                           ),
@@ -319,9 +326,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       inactiveTrackColor: Colors.grey[700],
                       thumbColor: Colors.white,
                       thumbShape: const RoundSliderThumbShape(
-                          enabledThumbRadius: 6),
+                        enabledThumbRadius: 6,
+                      ),
                       overlayShape: const RoundSliderOverlayShape(
-                          overlayRadius: 14),
+                        overlayRadius: 14,
+                      ),
                       trackHeight: 3,
                     ),
                     child: Slider(
@@ -340,12 +349,16 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                         Text(
                           _formatTime(_currentSliderValue),
                           style: TextStyle(
-                              color: Colors.grey[400], fontSize: 12),
+                            color: Colors.grey[400],
+                            fontSize: 12,
+                          ),
                         ),
                         Text(
                           _formatDuration(song?.duration),
                           style: TextStyle(
-                              color: Colors.grey[400], fontSize: 12),
+                            color: Colors.grey[400],
+                            fontSize: 12,
+                          ),
                         ),
                       ],
                     ),
@@ -358,17 +371,22 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
                       IconButton(
-                        icon: Icon(Icons.shuffle_rounded,
-                            color: _isShuffle
+                        icon: Icon(
+                          Icons.shuffle_rounded,
+                          color: _isShuffle
                               ? const Color(0xFF0B3B8C)
-                                : Colors.grey[400],
-                            size: 24),
+                              : Colors.grey[400],
+                          size: 24,
+                        ),
                         onPressed: () =>
                             setState(() => _isShuffle = !_isShuffle),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.skip_previous_rounded,
-                            color: Colors.white, size: 36),
+                        icon: const Icon(
+                          Icons.skip_previous_rounded,
+                          color: Colors.white,
+                          size: 36,
+                        ),
                         onPressed: () {},
                       ),
                       GestureDetector(
@@ -402,8 +420,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                         ),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.skip_next_rounded,
-                            color: Colors.white, size: 36),
+                        icon: const Icon(
+                          Icons.skip_next_rounded,
+                          color: Colors.white,
+                          size: 36,
+                        ),
                         onPressed: () {},
                       ),
                       IconButton(
@@ -411,13 +432,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                           _repeatMode == 2
                               ? Icons.repeat_one_rounded
                               : Icons.repeat_rounded,
-                            color: _repeatMode > 0
+                          color: _repeatMode > 0
                               ? const Color(0xFF0B3B8C)
                               : Colors.grey[400],
                           size: 24,
                         ),
-                        onPressed: () => setState(
-                            () => _repeatMode = (_repeatMode + 1) % 3),
+                        onPressed: () =>
+                            setState(() => _repeatMode = (_repeatMode + 1) % 3),
                       ),
                     ],
                   ),
@@ -429,20 +450,29 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       IconButton(
-                        icon: Icon(Icons.devices_rounded,
-                            color: Colors.grey[400], size: 20),
+                        icon: Icon(
+                          Icons.devices_rounded,
+                          color: Colors.grey[400],
+                          size: 20,
+                        ),
                         onPressed: () {},
                       ),
                       Row(
                         children: [
                           IconButton(
-                            icon: Icon(Icons.share_rounded,
-                                color: Colors.grey[400], size: 20),
+                            icon: Icon(
+                              Icons.share_rounded,
+                              color: Colors.grey[400],
+                              size: 20,
+                            ),
                             onPressed: () {},
                           ),
                           IconButton(
-                            icon: Icon(Icons.queue_music_rounded,
-                                color: Colors.grey[400], size: 20),
+                            icon: Icon(
+                              Icons.queue_music_rounded,
+                              color: Colors.grey[400],
+                              size: 20,
+                            ),
                             onPressed: () {},
                           ),
                         ],

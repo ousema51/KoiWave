@@ -71,10 +71,12 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: _isLoading
-        ? const Center(child: CircularProgressIndicator(color: Color(0xFF0B3B8C)))
-        : RefreshIndicator(
-          onRefresh: _loadData,
-          color: const Color(0xFF0B3B8C),
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
+            )
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              color: const Color(0xFF0B3B8C),
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
@@ -100,14 +102,23 @@ class _HomeScreenState extends State<HomeScreen> {
                     const SizedBox(height: 14),
                     SizedBox(
                       height: 180,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _trending.length,
-                        itemBuilder: (context, index) {
-                          final song = _trending[index];
-                          return _TrendingCard(
-                            song: song,
-                            onTap: () => widget.onSongSelected(song),
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          return ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            itemCount: _trending.length,
+                            itemBuilder: (context, index) {
+                              final song = _trending[index];
+                              return ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  maxHeight: constraints.maxHeight,
+                                ),
+                                child: _TrendingCard(
+                                  song: song,
+                                  onTap: () => widget.onSongSelected(song),
+                                ),
+                              );
+                            },
                           );
                         },
                       ),
@@ -125,18 +136,30 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 14),
-                    SizedBox(
-                      height: 160,
-                      child: ListView.builder(
-                        scrollDirection: Axis.horizontal,
-                        itemCount: _recentHistory.length,
-                        itemBuilder: (context, index) {
-                          final song = _recentHistory[index];
-                          return _RecentCard(
-                            song: song,
-                            onTap: () => widget.onSongSelected(song),
-                          );
-                        },
+                    SingleChildScrollView(
+                      physics: const BouncingScrollPhysics(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _recentHistory[0].title,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          ..._recentHistory
+                              .skip(1)
+                              .map(
+                                (song) => SongTile(
+                                  song: song,
+                                  onTap: () => widget.onSongSelected(song),
+                                ),
+                              ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: 30),
@@ -152,10 +175,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    ..._suggestions.map((song) => SongTile(
-                          song: song,
-                          onTap: () => widget.onSongSelected(song),
-                        )),
+                    ..._suggestions.map(
+                      (song) => SongTile(
+                        song: song,
+                        onTap: () => widget.onSongSelected(song),
+                      ),
+                    ),
                   ],
 
                   if (_trending.isEmpty &&
@@ -166,13 +191,18 @@ class _HomeScreenState extends State<HomeScreen> {
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
                           const SizedBox(height: 60),
-                          Icon(Icons.music_off_rounded,
-                              color: Colors.grey[600], size: 60),
+                          Icon(
+                            Icons.music_off_rounded,
+                            color: Colors.grey[600],
+                            size: 60,
+                          ),
                           const SizedBox(height: 16),
                           Text(
                             'No music available',
                             style: TextStyle(
-                                color: Colors.grey[400], fontSize: 16),
+                              color: Colors.grey[400],
+                              fontSize: 16,
+                            ),
                           ),
                         ],
                       ),
@@ -212,15 +242,21 @@ class _TrendingCard extends StatelessWidget {
                             Container(color: Colors.grey[800]),
                         errorWidget: (context, url, error) => Container(
                           color: const Color(0xFF282828),
-                          child: const Icon(Icons.music_note_rounded,
-                              color: Colors.white54, size: 40),
+                          child: const Icon(
+                            Icons.music_note_rounded,
+                            color: Colors.white54,
+                            size: 40,
+                          ),
                         ),
                         fit: BoxFit.cover,
                       )
                     : Container(
                         color: const Color(0xFF282828),
-                        child: const Icon(Icons.music_note_rounded,
-                            color: Colors.white54, size: 40),
+                        child: const Icon(
+                          Icons.music_note_rounded,
+                          color: Colors.white54,
+                          size: 40,
+                        ),
                       ),
               ),
             ),
@@ -277,15 +313,21 @@ class _RecentCard extends StatelessWidget {
                             Container(color: Colors.grey[800]),
                         errorWidget: (context, url, error) => Container(
                           color: const Color(0xFF282828),
-                          child: const Icon(Icons.album_rounded,
-                              color: Colors.grey, size: 40),
+                          child: const Icon(
+                            Icons.album_rounded,
+                            color: Colors.grey,
+                            size: 40,
+                          ),
                         ),
                         fit: BoxFit.cover,
                       )
                     : Container(
                         color: const Color(0xFF282828),
-                        child: const Icon(Icons.album_rounded,
-                            color: Colors.grey, size: 40),
+                        child: const Icon(
+                          Icons.album_rounded,
+                          color: Colors.grey,
+                          size: 40,
+                        ),
                       ),
               ),
             ),
