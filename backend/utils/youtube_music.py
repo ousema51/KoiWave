@@ -118,10 +118,10 @@ def get_song_by_id(video_id=""):
     video_id = video_id.strip()
 
     meta = {
-        "title": f"Video {video_id}",
+        "title": None,  # Start with None to ensure fallback logic
         "artist": "Unknown Artist",
         "duration": None,
-        "thumbnail": "https://img.youtube.com/vi/{}/hqdefault.jpg".format(video_id),
+        "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
     }
 
     if ytmusic:
@@ -139,8 +139,11 @@ def get_song_by_id(video_id=""):
                         meta["thumbnail"] = f"https:{turl}"
                     else:
                         meta["thumbnail"] = turl
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Failed to fetch song metadata: {e}")
+
+    # Ensure title fallback is meaningful
+    meta["title"] = meta["title"] or f"Unknown Title ({video_id})"
 
     data = {
         "id": video_id,

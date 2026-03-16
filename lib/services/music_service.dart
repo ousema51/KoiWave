@@ -54,10 +54,13 @@ class MusicService {
 
   // --- Stream URL (resolved on device, not backend) ---
   Future<String?> getStreamUrl(String songId) async {
-    // Prefer backend-resolved stream URL when available
-    final res = await _api.get('/music/stream/$songId');
-    if (res['success'] == true && res['data'] != null) {
-      return (res['data']['stream_url'] ?? res['data']['streamUrl'])?.toString();
+    try {
+      final res = await _api.get('/music/stream/$songId');
+      if (res['success'] == true && res['data'] != null) {
+        return (res['data']['stream_url'] ?? res['data']['streamUrl'])?.toString();
+      }
+    } catch (e) {
+      print('Error fetching stream URL: $e');
     }
     // Fallback to device resolver
     return _player.resolveStreamUrl(songId);
@@ -65,26 +68,29 @@ class MusicService {
 
   Future<String?> getStreamUrlWithHint(
       String songId, String? titleHint) async {
-    // Try backend stream resolver with optional title hint to improve accuracy
-    final q = titleHint != null && titleHint.isNotEmpty
-        ? '?q=${Uri.encodeComponent(titleHint)}'
-        : '';
-    final res = await _api.get('/music/stream/$songId$q');
-    if (res['success'] == true && res['data'] != null) {
-      final data = res['data'];
-      // Explicit stream URL from backend
-      final explicit = (data['stream_url'] ?? data['streamUrl'])?.toString();
-      if (explicit != null && explicit.isNotEmpty) return explicit;
+    try {
+      final q = titleHint != null && titleHint.isNotEmpty
+          ? '?q=${Uri.encodeComponent(titleHint)}'
+          : '';
+      final res = await _api.get('/music/stream/$songId$q');
+      if (res['success'] == true && res['data'] != null) {
+        final data = res['data'];
+        // Explicit stream URL from backend
+        final explicit = (data['stream_url'] ?? data['streamUrl'])?.toString();
+        if (explicit != null && explicit.isNotEmpty) return explicit;
 
-      // Backend asks client to resolve via Piped instances
-      final videoId = (data['video_id'] ?? data['videoId'])?.toString();
-      final piped = data['piped_instances'] ?? data['pipedInstances'];
-      final resolveOnClient = data['resolve_on_client'] ?? data['resolveOnClient'];
-      if (videoId != null && resolveOnClient == true && piped is List && piped.isNotEmpty) {
-        // Use first piped instance to form a streams URL the client can fetch
-        final instance = piped.first.toString().replaceAll(RegExp(r'\/$'), '');
-        return '$instance/streams/$videoId';
+        // Backend asks client to resolve via Piped instances
+        final videoId = (data['video_id'] ?? data['videoId'])?.toString();
+        final piped = data['piped_instances'] ?? data['pipedInstances'];
+        final resolveOnClient = data['resolve_on_client'] ?? data['resolveOnClient'];
+        if (videoId != null && resolveOnClient == true && piped is List && piped.isNotEmpty) {
+          // Use first piped instance to form a streams URL the client can fetch
+          final instance = piped.first.toString().replaceAll(RegExp(r'\/$'), '');
+          return '$instance/streams/$videoId';
+        }
       }
+    } catch (e) {
+      print('Error fetching stream URL with hint: $e');
     }
     // Fallback to device resolver
     return _player.resolveStreamUrl(songId);
