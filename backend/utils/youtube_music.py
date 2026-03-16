@@ -3,7 +3,6 @@ YouTube Music backend — search via ytmusicapi, streams via client-side Piped.
 """
 
 import logging
-import yt_dlp
 
 logger = logging.getLogger(__name__)
 
@@ -96,38 +95,20 @@ PIPED_INSTANCES = [
 
 
 def get_stream_url(video_id=""):
-    """Return a static audio URL for testing purposes."""
-    return {
-        "success": True,
-        "data": {
-            "audio_url": "https://rr2---sn-hpa7kn76.googlevideo.com/videoplayback?expire=1773699065&ei=mSu4aa7zEKe9mLAPq7b6wAs&ip=197.240.203.174&id=o-AA6tk2KdcuP51aUaPDos5xEEVXwAMu09C651jk9nwwU7&itag=251&source=youtube&requiressl=yes&xpc=EgVo2aDSNQ%3D%3D&cps=584&rms=au%2Cau&gcr=tn&bui=AVNa5-xrKhPGa5F9TxtBq-hF6imStB90Fh3uvSgWNxXXDh3FY42V7lEWogD5N5MvAGFm-_BTvcxYvNRa&spc=6dlaFMqtgR6GRoEkFhq5AZuVJL9Aa1R0HryXiGYtYxSw&vprv=1&svpuc=1&mime=audio%2Fwebm&rqh=1&gir=yes&clen=3753925&dur=223.081&lmt=1762575443296119&keepalive=yes&fexp=51565116,51565682,51791334&c=ANDROID_VR&txp=5532534&sparams=expire%2Cei%2Cip%2Cid%2Citag%2Csource%2Crequiressl%2Cxpc%2Cgcr%2Cbui%2Cspc%2Cvprv%2Csvpuc%2Cmime%2Crqh%2Cgir%2Cclen%2Cdur%2Clmt&sig=AHEqNM4wRQIhALMptMY8l7mA4TzBHJ7r_DpW37eP3vfJ06aXpXyvTa4bAiBNvG-2TWc23lF0AROmJnW4C8YjzfjQ1cUesgM1oYP3cw%3D%3D&redirect_counter=1&cm2rm=sn-u0opnpxuxa-u0oz7l&rrc=191&req_id=640afe1eea60a3ee&cms_redirect=yes&cmsv=e&met=1773677474,&mh=vb&mm=29&mn=sn-hpa7kn76&ms=rdu&mt=1773676889&mv=m&mvi=2&pl=21&lsparams=cps,met,mh,mm,mn,ms,mv,mvi,pl,rms&lsig=APaTxxMwRQIhALu8c27D_17mgdq4n07pFF7LpBXgfd7yyG78PYYNubbdAiAhWCkHXHTYFBI28ZfpEWcpti-SK7Mpw_sBmFzmKARdTw%3D%3D",
-        },
-    }
+    """Return Piped API URL for the frontend to call directly."""
+    if not video_id or not video_id.strip():
+        return {"success": False, "message": "No video_id provided"}
 
     video_id = video_id.strip()
 
-    try:
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'quiet': True,
-            'noplaylist': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
-            audio_url = info.get('url')
-
-        if not audio_url:
-            return {"success": False, "message": "Failed to extract audio URL"}
-
-        return {
-            "success": True,
-            "data": {
-                "audio_url": audio_url,
-            },
-        }
-
-    except Exception as e:
-        return {"success": False, "message": f"Error: {str(e)}"}
+    return {
+        "success": True,
+        "data": {
+            "video_id": video_id,
+            "piped_instances": PIPED_INSTANCES,
+            "resolve_on_client": True,
+        },
+    }
 
 
 def get_song_by_id(video_id=""):
@@ -137,10 +118,10 @@ def get_song_by_id(video_id=""):
     video_id = video_id.strip()
 
     meta = {
-        "title": None,  # Start with None to ensure fallback logic
-        "artist": "Unknown Artist",
+        "title": None,
+        "artist": None,
         "duration": None,
-        "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
+        "thumbnail": "https://img.youtube.com/vi/{}/hqdefault.jpg".format(video_id),
     }
 
     if ytmusic:
@@ -148,21 +129,13 @@ def get_song_by_id(video_id=""):
             info = ytmusic.get_song(video_id)
             vd = info.get("videoDetails") or {}
             thumbs = vd.get("thumbnail", {}).get("thumbnails") or []
-            meta["title"] = vd.get("title") or meta["title"]
-            meta["artist"] = vd.get("author") or meta["artist"]
-            meta["duration"] = vd.get("lengthSeconds") or meta["duration"]
+            meta["title"] = vd.get("title")
+            meta["artist"] = vd.get("author")
+            meta["duration"] = vd.get("lengthSeconds")
             if thumbs:
-                turl = thumbs[-1].get("url")
-                if turl:
-                    if isinstance(turl, str) and turl.startswith("//"):
-                        meta["thumbnail"] = f"https:{turl}"
-                    else:
-                        meta["thumbnail"] = turl
-        except Exception as e:
-            logger.error(f"Failed to fetch song metadata: {e}")
-
-    # Ensure title fallback is meaningful
-    meta["title"] = meta["title"] or f"Unknown Title ({video_id})"
+                meta["thumbnail"] = thumbs[-1].get("url")
+        except Exception:
+            pass
 
     data = {
         "id": video_id,
