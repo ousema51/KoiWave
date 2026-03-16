@@ -1,6 +1,6 @@
 # Spotify Clone — Backend API
 
-A Python Flask REST API designed to be deployed on **Vercel** (serverless). Provides authentication, music search via JioSaavn, user libraries, playlists, listening history, and social features.
+A Python Flask REST API designed to be deployed on **Vercel** (serverless). Provides authentication, music search via YouTube Music (ytmusicapi), user libraries, playlists, listening history, and social features.
 
 ---
 
@@ -12,7 +12,7 @@ backend/
 │   └── index.py          # Main Flask app entry point (required by Vercel)
 ├── routes/
 │   ├── auth.py           # Register / login / logout / me
-│   ├── music.py          # JioSaavn proxy (search, songs, albums, artists, trending)
+│   ├── music.py          # YouTube Music proxy (search, songs, albums, artists, trending)
 │   ├── library.py        # Liked songs
 │   ├── playlists.py      # Playlist CRUD + follow/unfollow
 │   ├── listening.py      # Listening history + smart suggestions
@@ -23,7 +23,7 @@ backend/
 ├── models/
 │   └── db.py             # MongoDB connection + collection references
 ├── utils/
-│   └── jiosaavn.py       # JioSaavn API helper functions
+│   └── youtube_music.py  # YouTube Music helper functions (ytmusicapi + Piped)
 ├── requirements.txt
 ├── vercel.json
 ├── .env.example
@@ -61,7 +61,7 @@ cp .env.example .env
 |---------------------|----------------------------------------------------------|
 | `MONGODB_URI`       | MongoDB Atlas connection string                          |
 | `JWT_SECRET`        | Secret key used to sign JWT tokens (keep this secret!)   |
-| `JIOSAAVN_API_BASE` | Base URL for the JioSaavn API (default: `https://saavn.dev/api`) |
+| `PIPED_INSTANCES`     | List of Piped instances used for client-side stream resolution |
 
 ### 3. Run locally
 

@@ -4,7 +4,7 @@ from flask import Blueprint, g, jsonify, request
 
 import models.db as db
 from middleware.auth_middleware import token_required
-from utils import jiosaavn
+from utils import youtube_music
 
 listening_bp = Blueprint("listening", __name__)
 
@@ -118,19 +118,15 @@ def suggestions():
     # 4. Fetch top songs for each top artist
     suggested: list = []
     for artist_name in top_artists:
-        result = jiosaavn.search_artists(artist_name, limit=1)
-        artists_data = (result.get("data") or {}).get("results") or []
+        result = youtube_music.search_artists(artist_name, limit=1)
+        artists_data = (result.get("data") or [])
         if not artists_data:
             continue
         artist_id = artists_data[0].get("id")
         if not artist_id:
             continue
-        artist_detail = jiosaavn.get_artist_by_id(artist_id)
-        top_songs = (
-            (artist_detail.get("data") or {}).get("topSongs")
-            or (artist_detail.get("data") or {}).get("songs")
-            or []
-        )
+        artist_detail = youtube_music.get_artist_by_id(artist_id)
+        top_songs = (artist_detail.get("data") or {}).get("songs") or []
         for song in top_songs[:10]:
             sid = song.get("id")
             if sid and sid not in recent_ids:
@@ -139,10 +135,8 @@ def suggestions():
 
     # 5. Mix with trending if we don't have enough
     if len(suggested) < 20:
-        trending = jiosaavn.get_trending()
+        trending = youtube_music.get_trending()
         trending_songs = (trending.get("data") or [])
-        if isinstance(trending_songs, dict):
-            trending_songs = trending_songs.get("songs") or trending_songs.get("results") or []
         for song in trending_songs:
             if len(suggested) >= 20:
                 break
