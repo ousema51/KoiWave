@@ -57,9 +57,9 @@ class _AlbumScreenState extends State<AlbumScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
-      body: _isLoading
+        body: _isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF1DB954)))
+            child: CircularProgressIndicator(color: Color(0xFF0B3B8C)))
           : _album == null
               ? Center(
                   child: Column(
@@ -74,7 +74,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
                       TextButton(
                         onPressed: () => Navigator.pop(context),
                         child: const Text('Go back',
-                            style: TextStyle(color: Color(0xFF1DB954))),
+                          style: TextStyle(color: Color(0xFF0B3B8C))),
                       ),
                     ],
                   ),
@@ -164,7 +164,7 @@ class _AlbumScreenState extends State<AlbumScreen> {
                               icon: const Icon(Icons.shuffle_rounded),
                               label: const Text('Shuffle play'),
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF1DB954),
+                                backgroundColor: const Color(0xFF0B3B8C),
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(30),

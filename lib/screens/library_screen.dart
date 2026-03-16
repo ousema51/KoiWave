@@ -86,8 +86,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 }
                 Navigator.pop(context);
               },
-              child: const Text('Add',
-                  style: TextStyle(color: Color(0xFF1DB954))),
+                child: const Text('Add',
+                  style: TextStyle(color: Color(0xFF0B3B8C))),
             ),
           ],
         );
@@ -121,8 +121,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             if (_isLoading)
               const Expanded(
                 child: Center(
-                  child: CircularProgressIndicator(
-                      color: Color(0xFF1DB954)),
+                    child: CircularProgressIndicator(
+                      color: Color(0xFF0B3B8C)),
                 ),
               )
             else if (!_isLoggedIn)
@@ -144,7 +144,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                         onPressed: () =>
                             Navigator.pushNamed(context, '/login'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1DB954),
+                          backgroundColor: const Color(0xFF0B3B8C),
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(30),
@@ -160,7 +160,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               Expanded(
                 child: RefreshIndicator(
                   onRefresh: _loadData,
-                  color: const Color(0xFF1DB954),
+                  color: const Color(0xFF0B3B8C),
                   child: ListView(
                     children: [
                       // Liked Songs card
@@ -177,7 +177,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                               gradient: const LinearGradient(
                                 colors: [
                                   Color(0xFF7B4FFF),
-                                  Color(0xFF1DB954)
+                                  Color(0xFF0B3B8C)
                                 ],
                                 begin: Alignment.topLeft,
                                 end: Alignment.bottomRight,

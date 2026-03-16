@@ -113,8 +113,8 @@ class _MainScreenState extends State<MainScreen> {
                         return TextButton(
                           onPressed: () =>
                               Navigator.pushNamed(context, '/login'),
-                          child: const Text('Log In',
-                              style: TextStyle(color: Color(0xFF1DB954))),
+                            child: const Text('Log In',
+                              style: TextStyle(color: Color(0xFF0B3B8C))),
                         );
                       },
                     ),
@@ -134,7 +134,7 @@ class _MainScreenState extends State<MainScreen> {
             currentIndex: _selectedIndex,
             onTap: (index) => setState(() => _selectedIndex = index),
             backgroundColor: const Color(0xFF1A1A1A),
-            selectedItemColor: const Color(0xFF1DB954),
+            selectedItemColor: const Color(0xFF0B3B8C),
             unselectedItemColor: Colors.grey,
             type: BottomNavigationBarType.fixed,
             selectedFontSize: 12,

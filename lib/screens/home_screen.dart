@@ -71,10 +71,10 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return SafeArea(
       child: _isLoading
-          ? const Center(child: CircularProgressIndicator(color: Color(0xFF1DB954)))
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              color: const Color(0xFF1DB954),
+        ? const Center(child: CircularProgressIndicator(color: Color(0xFF0B3B8C)))
+        : RefreshIndicator(
+          onRefresh: _loadData,
+          color: const Color(0xFF0B3B8C),
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [

@@ -185,7 +185,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       borderRadius: BorderRadius.circular(12),
                       boxShadow: [
                         BoxShadow(
-                          color: const Color(0xFF1DB954).withOpacity(0.25),
+                          color: const Color(0xFF0B3B8C).withOpacity(0.25),
                           blurRadius: 40,
                           offset: const Offset(0, 16),
                           spreadRadius: 4,
@@ -206,7 +206,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                               decoration: const BoxDecoration(
                                 gradient: LinearGradient(
                                   colors: [
-                                    Color(0xFF1DB954),
+                                    Color(0xFF0B3B8C),
                                     Color(0xFF0A5C2B)
                                   ],
                                   begin: Alignment.topLeft,
@@ -222,7 +222,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                               decoration: const BoxDecoration(
                                 gradient: LinearGradient(
                                   colors: [
-                                    Color(0xFF1DB954),
+                                    Color(0xFF0B3B8C),
                                     Color(0xFF0A5C2B)
                                   ],
                                   begin: Alignment.topLeft,
@@ -240,7 +240,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                             decoration: const BoxDecoration(
                               gradient: LinearGradient(
                                 colors: [
-                                  Color(0xFF1DB954),
+                                  Color(0xFF0B3B8C),
                                   Color(0xFF0A5C2B)
                                 ],
                                 begin: Alignment.topLeft,
@@ -300,7 +300,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                                 : Icons.favorite_border,
                             key: ValueKey(_isLiked),
                             color: _isLiked
-                                ? const Color(0xFF1DB954)
+                              ? const Color(0xFF0B3B8C)
                                 : Colors.grey[400],
                             size: 28,
                           ),
@@ -360,7 +360,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       IconButton(
                         icon: Icon(Icons.shuffle_rounded,
                             color: _isShuffle
-                                ? const Color(0xFF1DB954)
+                              ? const Color(0xFF0B3B8C)
                                 : Colors.grey[400],
                             size: 24),
                         onPressed: () =>
@@ -411,8 +411,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                           _repeatMode == 2
                               ? Icons.repeat_one_rounded
                               : Icons.repeat_rounded,
-                          color: _repeatMode > 0
-                              ? const Color(0xFF1DB954)
+                            color: _repeatMode > 0
+                              ? const Color(0xFF0B3B8C)
                               : Colors.grey[400],
                           size: 24,
                         ),

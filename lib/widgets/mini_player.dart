@@ -134,8 +134,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                                 decoration: const BoxDecoration(
                                   gradient: LinearGradient(
                                     colors: [
-                                      Color(0xFF1DB954),
-                                      Color(0xFF148A3D)
+                                        Color(0xFF0B3B8C),
+                                          Color(0xFF148A3D)
                                     ],
                                     begin: Alignment.topLeft,
                                     end: Alignment.bottomRight,
@@ -150,8 +150,8 @@ class _MiniPlayerState extends State<MiniPlayer>
                               decoration: const BoxDecoration(
                                 gradient: LinearGradient(
                                   colors: [
-                                    Color(0xFF1DB954),
-                                    Color(0xFF148A3D)
+                                      Color(0xFF0B3B8C),
+                                        Color(0xFF148A3D)
                                   ],
                                   begin: Alignment.topLeft,
                                   end: Alignment.bottomRight,
@@ -202,11 +202,11 @@ class _MiniPlayerState extends State<MiniPlayer>
                       duration: const Duration(milliseconds: 200),
                       transitionBuilder: (child, anim) =>
                           ScaleTransition(scale: anim, child: child),
-                      child: Icon(
+                        child: Icon(
                         _isLiked ? Icons.favorite : Icons.favorite_border,
                         key: ValueKey(_isLiked),
                         color: _isLiked
-                            ? const Color(0xFF1DB954)
+                            ? const Color(0xFF0B3B8C)
                             : Colors.grey[400],
                         size: 22,
                       ),
@@ -268,7 +268,7 @@ class _MiniPlayerState extends State<MiniPlayer>
                       child: Container(
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(2),
-                          color: const Color(0xFF1DB954),
+                          color: const Color(0xFF0B3B8C),
                         ),
                       ),
                     ),

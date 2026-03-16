@@ -13,17 +13,17 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Spotify Clone',
+      title: 'KoiWave',
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF121212),
         bottomNavigationBarTheme: const BottomNavigationBarThemeData(
           backgroundColor: Color(0xFF1A1A1A),
-          selectedItemColor: Color(0xFF1DB954),
+          selectedItemColor: Color(0xFF0B3B8C),
           unselectedItemColor: Colors.grey,
         ),
         colorScheme: ColorScheme.dark(
-          primary: const Color(0xFF1DB954),
-          secondary: const Color(0xFF1DB954),
+          primary: const Color(0xFF0B3B8C),
+          secondary: const Color(0xFF0B3B8C),
           surface: const Color(0xFF1A1A1A),
         ),
       ),
@@ -56,7 +56,7 @@ class _AppEntryState extends State<_AppEntry> {
           return const Scaffold(
             backgroundColor: Color(0xFF121212),
             body: Center(
-              child: CircularProgressIndicator(color: Color(0xFF1DB954)),
+              child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
             ),
           );
         }

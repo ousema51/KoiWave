@@ -143,7 +143,7 @@ class _SearchScreenState extends State<SearchScreen> {
             const SizedBox(height: 20),
             if (_isSearching)
               const Center(
-                child: CircularProgressIndicator(color: Color(0xFF1DB954)),
+                child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
               )
             else if (_hasSearched)
               Expanded(child: _buildSearchResults())

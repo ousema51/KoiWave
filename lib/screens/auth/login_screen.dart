@@ -77,7 +77,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     width: 72,
                     height: 72,
                     decoration: const BoxDecoration(
-                      color: Color(0xFF1DB954),
+                      color: Color(0xFF0B3B8C),
                       shape: BoxShape.circle,
                     ),
                     child: const Icon(Icons.music_note_rounded,
@@ -87,7 +87,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                   // App title
                   const Text(
-                    'Spotify Clone',
+                    'KoiWave',
                     style: TextStyle(
                       fontSize: 28,
                       fontWeight: FontWeight.bold,
@@ -120,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: const BorderSide(
-                            color: Color(0xFF1DB954), width: 1.5),
+                            color: Color(0xFF0B3B8C), width: 1.5),
                       ),
                     ),
                     validator: (value) {
@@ -151,7 +151,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(12),
                         borderSide: const BorderSide(
-                            color: Color(0xFF1DB954), width: 1.5),
+                            color: Color(0xFF0B3B8C), width: 1.5),
                       ),
                     ),
                     validator: (value) {
@@ -173,7 +173,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: ElevatedButton(
                       onPressed: _isLoading ? null : _submit,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF1DB954),
+                        backgroundColor: const Color(0xFF0B3B8C),
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(30),
@@ -216,7 +216,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: Text(
                           _isLogin ? 'Sign up' : 'Log in',
                           style: const TextStyle(
-                            color: Color(0xFF1DB954),
+                            color: Color(0xFF0B3B8C),
                             fontWeight: FontWeight.bold,
                           ),
                         ),

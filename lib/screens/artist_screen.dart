@@ -70,9 +70,9 @@ class _ArtistScreenState extends State<ArtistScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
-      body: _isLoading
+        body: _isLoading
           ? const Center(
-              child: CircularProgressIndicator(color: Color(0xFF1DB954)))
+            child: CircularProgressIndicator(color: Color(0xFF0B3B8C)))
           : _artist == null
               ? Center(
                   child: Column(
@@ -86,8 +86,8 @@ class _ArtistScreenState extends State<ArtistScreen> {
                       const SizedBox(height: 16),
                       TextButton(
                         onPressed: () => Navigator.pop(context),
-                        child: const Text('Go back',
-                            style: TextStyle(color: Color(0xFF1DB954))),
+                            child: const Text('Go back',
+                              style: TextStyle(color: Color(0xFF0B3B8C))),
                       ),
                     ],
                   ),

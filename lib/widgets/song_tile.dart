@@ -68,7 +68,7 @@ class SongTile extends StatelessWidget {
               icon: Icon(
                 isLiked == true ? Icons.favorite : Icons.favorite_border,
                 color: isLiked == true
-                    ? const Color(0xFF1DB954)
+                    ? const Color(0xFF0B3B8C)
                     : Colors.grey[400],
                 size: 20,
               ),
