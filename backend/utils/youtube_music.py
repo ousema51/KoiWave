@@ -126,7 +126,7 @@ def get_stream_url(video_id=""):
         }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            url = f"https://music.youtube.com/watch?v={video_id}"  # 🔥 important
+            url = f"https://youtube.com/watch?v={video_id}"  # 🔥 important
             info = ydl.extract_info(url, download=False)
 
             # safer extraction
