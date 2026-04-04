@@ -48,17 +48,21 @@ class PlayerService {
 
     // Set up listeners for player state changes
     _controller?.listen((state) {
-      if (state.isReady && !_isReady) {
+      // Check if player is ready (has playerState defined)
+      bool isPlayerReady = state.playerState != null;
+      if (isPlayerReady && !_isReady) {
         _isReady = true;
         _readyNotifier.value = true;
         debugPrint('[PlayerService] Player ready for: ${song.title}');
       }
 
-      if (state.isPlaying && !_isPlaying) {
+      // Check if currently playing
+      bool isCurrentlyPlaying = state.playerState == PlayerState.playing;
+      if (isCurrentlyPlaying && !_isPlaying) {
         _isPlaying = true;
         _playingNotifier.value = true;
         debugPrint('[PlayerService] Now playing: ${song.title}');
-      } else if (!state.isPlaying && _isPlaying) {
+      } else if (!isCurrentlyPlaying && _isPlaying) {
         _isPlaying = false;
         _playingNotifier.value = false;
         debugPrint('[PlayerService] Paused: ${song.title}');
