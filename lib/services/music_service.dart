@@ -2,7 +2,8 @@ import '../models/song.dart';
 import '../models/album.dart';
 import '../models/artist.dart';
 import 'api_service.dart';
-import 'player_service.dart';
+import 'package:flutter/foundation.dart';
+// Player is unused here; playback handled by PlayerService when needed
 
 class MusicService {
   static final MusicService _instance = MusicService._internal();
@@ -10,7 +11,7 @@ class MusicService {
   MusicService._internal();
 
   final ApiService _api = ApiService();
-  final PlayerService _player = PlayerService();
+  // PlayerService instance not required in this service
 
   // --- Search ---
   Future<List<Song>> searchSongs(String query) async {
@@ -62,10 +63,11 @@ class MusicService {
         if (audioUrl != null && audioUrl.isNotEmpty) return audioUrl;
       }
     } catch (e) {
-      print('Error fetching stream URL: $e');
+      debugPrint('Error fetching stream URL: $e');
     }
     // Fallback to device resolver
-    return _player.resolveStreamUrl(songId);
+    // Device-side stream resolution removed; return null
+    return null;
   }
 
   Future<String?> getStreamUrlWithHint(String songId, String? titleHint) async {
@@ -80,10 +82,10 @@ class MusicService {
         if (audioUrl != null && audioUrl.isNotEmpty) return audioUrl;
       }
     } catch (e) {
-      print('Error fetching stream URL with hint: $e');
+      debugPrint('Error fetching stream URL with hint: $e');
     }
-    // Fallback to device resolver
-    return _player.resolveStreamUrl(songId);
+    // Device-side stream resolution removed; return null
+    return null;
   }
 
   // --- Individual fetch ---

@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import 'dart:async';
 
 class FullPlayerScreen extends StatefulWidget {
@@ -26,7 +27,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
   late Animation<Offset> _slideAnimation;
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
-  late final StreamSubscription<bool> _playingSub;
+  YoutubePlayerController? _ytController;
 
   @override
   void initState() {
@@ -41,9 +42,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
         );
     _slideController.forward();
     _checkLiked();
-    _playingSub = _player.playingStream.listen((playing) {
-      if (mounted) setState(() => _isPlaying = playing);
-    });
+    if (widget.currentSong != null) {
+      _player.loadSong(widget.currentSong!);
+      _ytController = _player.controller;
+      _isPlaying = _player.isPlaying;
+    }
   }
 
   @override
@@ -54,16 +57,9 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
       _isPlaying = false;
       _checkLiked();
       if (widget.currentSong != null) {
-        _player.playSong(widget.currentSong!).then((success) {
-          if (!success && mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Failed to play song'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        });
+        _player.loadSong(widget.currentSong!);
+        _ytController = _player.controller;
+        _isPlaying = _player.isPlaying;
       }
     }
   }
@@ -76,8 +72,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
 
   @override
   void dispose() {
-    _playingSub.cancel();
     _slideController.dispose();
+    _ytController?.close();
     super.dispose();
   }
 
@@ -134,6 +130,13 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
+                  // Hidden YouTube player
+                  if (_ytController != null)
+                    SizedBox(
+                      width: 1,
+                      height: 1,
+                      child: YoutubePlayer(controller: _ytController!),
+                    ),
                   // Top bar
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -394,7 +397,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                           if (_isPlaying) {
                             _player.pause();
                           } else {
-                            _player.resume();
+                            _player.play();
                           }
                         },
                         child: Container(

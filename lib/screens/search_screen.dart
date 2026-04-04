@@ -5,9 +5,6 @@ import '../models/album.dart';
 import '../models/artist.dart';
 import '../services/music_service.dart';
 import '../widgets/song_tile.dart';
-import '../widgets/album_card.dart';
-import 'album_screen.dart';
-import 'artist_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   final Function(Song) onSongSelected;
@@ -19,12 +16,14 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  final _searchController = TextEditingController();
+  TextEditingController get _searchController => TextEditingController();
   final MusicService _musicService = MusicService();
   Timer? _debounce;
 
   List<Song> _songResults = [];
+  // ignore: unused_field
   List<Album> _albumResults = [];
+  // ignore: unused_field
   List<Artist> _artistResults = [];
   bool _isSearching = false;
   bool _hasSearched = false;

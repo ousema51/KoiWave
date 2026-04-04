@@ -3,6 +3,7 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'dart:async';
 import '../models/song.dart';
 import '../services/music_service.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import '../services/player_service.dart';
 
 class MiniPlayer extends StatefulWidget {
@@ -22,8 +23,7 @@ class _MiniPlayerState extends State<MiniPlayer>
   late AnimationController _progressController;
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
-  late final Stream<bool> _playingStream;
-  late final StreamSubscription<bool> _playingSub;
+  YoutubePlayerController? _ytController;
 
   @override
   void initState() {
@@ -33,15 +33,11 @@ class _MiniPlayerState extends State<MiniPlayer>
       duration: const Duration(seconds: 10),
     );
     _checkLiked();
-    _playingStream = _player.playingStream;
-    _playingSub = _playingStream.listen((playing) {
-      if (mounted) setState(() => _isPlaying = playing);
-      if (playing) {
-        _progressController.forward();
-      } else {
-        _progressController.stop();
-      }
-    });
+    if (widget.currentSong != null) {
+      _player.loadSong(widget.currentSong!);
+      _ytController = _player.controller;
+      _isPlaying = _player.isPlaying;
+    }
   }
 
   @override
@@ -52,16 +48,9 @@ class _MiniPlayerState extends State<MiniPlayer>
       _isPlaying = false;
       _checkLiked();
       if (widget.currentSong != null) {
-        _player.playSong(widget.currentSong!).then((success) {
-          if (!success && mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Failed to play song'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-        });
+        _player.loadSong(widget.currentSong!);
+        _ytController = _player.controller;
+        _isPlaying = _player.isPlaying;
       }
     }
   }
@@ -74,8 +63,8 @@ class _MiniPlayerState extends State<MiniPlayer>
 
   @override
   void dispose() {
-    _playingSub.cancel();
     _progressController.dispose();
+    _ytController?.close();
     super.dispose();
   }
 
@@ -83,8 +72,11 @@ class _MiniPlayerState extends State<MiniPlayer>
     if (_isPlaying) {
       _player.pause();
     } else {
-      _player.resume();
+      _player.play();
     }
+    setState(() {
+      _isPlaying = _player.isPlaying;
+    });
   }
 
   Future<void> _toggleLike() async {
@@ -297,6 +289,13 @@ class _MiniPlayerState extends State<MiniPlayer>
               },
             ),
             const SizedBox(height: 6),
+            // Hidden YouTube player
+            if (_ytController != null)
+              SizedBox(
+                width: 1,
+                height: 1,
+                child: YoutubePlayer(controller: _ytController!),
+              ),
           ],
         ),
       ),

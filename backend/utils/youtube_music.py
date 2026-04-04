@@ -1,9 +1,8 @@
 """
-YouTube Music backend — search via ytmusicapi, streams via client-side Piped.
+YouTube Music backend — search via ytmusicapi
 """
 
 import logging
-import yt_dlp
 
 logger = logging.getLogger(__name__)
 
@@ -93,67 +92,70 @@ PIPED_INSTANCES = [
     "https://pipedapi.r4fo.com",
     "https://pipedapi.leptons.xyz",
 ]
-
-
-import os
-import uuid
-
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+"""
 
 def get_stream_url(video_id=""):
+    """"Return a direct audio URL using yt-dlp (anti-bot fixed).""""
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
-    try:
-        file_id = str(uuid.uuid4())
-        output_path = os.path.join(DOWNLOAD_DIR, f"{file_id}.%(ext)s")
+    video_id = video_id.strip()
 
+    try:
         ydl_opts = {
-            "format": "bestaudio/best",
-            "outtmpl": output_path,
+            "format": "bestaudio[ext=m4a]/bestaudio/best",
             "quiet": True,
             "noplaylist": True,
 
+            # 🔥 CRITICAL FIXES
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["android", "web"],
+                    "player_client": ["android", "web"],  # bypass bot checks
                 }
             },
 
+            # Pretend to be a real browser
             "http_headers": {
-                "User-Agent": "Mozilla/5.0",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+                "Accept-Language": "en-US,en;q=0.9",
             },
 
-            # Convert to mp3 (optional)
-            "postprocessors": [{
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "192",
-            }],
+            # Avoid extra requests
+            "skip_download": True,
         }
 
-        url = f"https://music.youtube.com/watch?v={video_id}"
-
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            url = f"https://music.youtube.com/watch?v={video_id}"  # 🔥 important
+            info = ydl.extract_info(url, download=False)
 
-        # find the actual file
-        for file in os.listdir(DOWNLOAD_DIR):
-            if file.startswith(file_id):
-                file_url = f"http://localhost:5000/audio/{file}"
-                return {
-                    "success": True,
-                    "data": {
-                        "audio_url": file_url
-                    }
-                }
+            # safer extraction
+            audio_url = None
 
-        return {"success": False, "message": "File not found after download"}
+            if "url" in info:
+                audio_url = info["url"]
+            elif "formats" in info:
+                formats = info["formats"]
+                # pick best audio manually
+                best_audio = next(
+                    (f for f in formats if f.get("acodec") != "none"),
+                    None
+                )
+                if best_audio:
+                    audio_url = best_audio.get("url")
+
+        if not audio_url:
+            return {"success": False, "message": "Failed to extract audio URL"}
+
+        return {
+            "success": True,
+            "data": {
+                "audio_url": audio_url,
+            },
+        }
 
     except Exception as e:
-        return {"success": False, "message": str(e)}
-
+        return {"success": False, "message": f"Error: {str(e)}"}
+"""
 
 def get_song_by_id(video_id=""):
     if not video_id or not video_id.strip():
@@ -197,7 +199,7 @@ def get_song_by_id(video_id=""):
     data.update(meta)
     return {"success": True, "data": data}
 
-
+"""
 def get_stream_from_search(query="", index=0):
     result = search_songs(query, limit=index + 5)
     if not result.get("success") or not result.get("data"):
@@ -205,7 +207,7 @@ def get_stream_from_search(query="", index=0):
     songs = result["data"]
     chosen = songs[index] if index < len(songs) else songs[0]
     return get_stream_url(chosen["id"])
-
+"""
 
 # ---------------------------------------------------------------------------
 # Albums / Artists / Trending

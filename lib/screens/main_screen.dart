@@ -30,13 +30,13 @@ class _MainScreenState extends State<MainScreen> {
 
   Future<void> _loadAndPlay(Song song) async {
     // song.id is the YouTube videoId from search results
-    print('[MainScreen] playing song: ${song.title} (${song.id})');
+    debugPrint('[MainScreen] playing song: ${song.title} (${song.id})');
 
     // Refresh metadata (thumbnail, duration) from backend when available
     try {
       final fresh = await MusicService().getSong(song.id);
       if (fresh != null && mounted) {
-        final t = (fresh.title ?? '').trim();
+        final t = (fresh.title).trim();
         if (t.isNotEmpty && t.toLowerCase() != 'unknown') {
           setState(() => _currentSong = fresh);
         }
@@ -51,12 +51,14 @@ class _MainScreenState extends State<MainScreen> {
       );
       bool played = false;
       if (url != null && url.isNotEmpty) {
-        played = await _player.playUrl(url);
-      }
-
-      // Fallback: resolve on device if backend failed
-      if (!played) {
-        played = await _player.playSong(song);
+        // Old audio logic removed; use PlayerService.loadSong and play
+        if (url.isNotEmpty) {
+          _player.loadSong(song);
+          _player.play();
+        } else {
+          _player.loadSong(song);
+          _player.play();
+        }
       }
 
       if (!played && mounted) {
@@ -68,7 +70,7 @@ class _MainScreenState extends State<MainScreen> {
         );
       }
     } catch (e) {
-      print('[MainScreen] _loadAndPlay error: $e');
+      debugPrint('[MainScreen] _loadAndPlay error: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
