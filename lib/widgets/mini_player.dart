@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
-import 'dart:async';
 import '../models/song.dart';
 import '../services/music_service.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
@@ -20,7 +19,7 @@ class _MiniPlayerState extends State<MiniPlayer>
     with SingleTickerProviderStateMixin {
   bool _isPlaying = false;
   bool _isLiked = false;
-  late AnimationController _progressController;
+  double _progress = 0.0;
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
   YoutubePlayerController? _ytController;
@@ -28,30 +27,37 @@ class _MiniPlayerState extends State<MiniPlayer>
   @override
   void initState() {
     super.initState();
-    _progressController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 10),
-    );
     _checkLiked();
-    if (widget.currentSong != null) {
-      _player.loadSong(widget.currentSong!);
-      _ytController = _player.controller;
+    _ytController = _player.controller;
+    _isPlaying = _player.isPlaying;
+    _progress = _player.progress;
+    _player.playingNotifier.addListener(_onPlayerStateChanged);
+    _player.positionNotifier.addListener(_onPlayerProgressChanged);
+    _player.durationNotifier.addListener(_onPlayerProgressChanged);
+  }
+
+  void _onPlayerStateChanged() {
+    if (!mounted) return;
+    setState(() {
       _isPlaying = _player.isPlaying;
-    }
+    });
+  }
+
+  void _onPlayerProgressChanged() {
+    if (!mounted) return;
+    setState(() {
+      _progress = _player.progress;
+    });
   }
 
   @override
   void didUpdateWidget(MiniPlayer oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentSong?.id != widget.currentSong?.id) {
-      _progressController.reset();
-      _isPlaying = false;
       _checkLiked();
-      if (widget.currentSong != null) {
-        _player.loadSong(widget.currentSong!);
-        _ytController = _player.controller;
-        _isPlaying = _player.isPlaying;
-      }
+      _ytController = _player.controller;
+      _isPlaying = _player.isPlaying;
+      _progress = _player.progress;
     }
   }
 
@@ -63,8 +69,9 @@ class _MiniPlayerState extends State<MiniPlayer>
 
   @override
   void dispose() {
-    _progressController.dispose();
-    _ytController?.close();
+    _player.playingNotifier.removeListener(_onPlayerStateChanged);
+    _player.positionNotifier.removeListener(_onPlayerProgressChanged);
+    _player.durationNotifier.removeListener(_onPlayerProgressChanged);
     super.dispose();
   }
 
@@ -74,9 +81,6 @@ class _MiniPlayerState extends State<MiniPlayer>
     } else {
       _player.play();
     }
-    setState(() {
-      _isPlaying = _player.isPlaying;
-    });
   }
 
   Future<void> _toggleLike() async {
@@ -262,31 +266,26 @@ class _MiniPlayerState extends State<MiniPlayer>
               ),
             ),
 
-            // Progress bar
-            AnimatedBuilder(
-              animation: _progressController,
-              builder: (context, child) {
-                return Container(
-                  height: 3,
-                  margin: const EdgeInsets.symmetric(horizontal: 12),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(2),
-                    color: Colors.grey[800],
-                  ),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: FractionallySizedBox(
-                      widthFactor: _progressController.value.clamp(0.0, 1.0),
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(2),
-                          color: const Color(0xFF0B3B8C),
-                        ),
-                      ),
+            // Progress bar (live playback progress)
+            Container(
+              height: 3,
+              margin: const EdgeInsets.symmetric(horizontal: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(2),
+                color: Colors.grey[800],
+              ),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: FractionallySizedBox(
+                  widthFactor: _progress.clamp(0.0, 1.0),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(2),
+                      color: const Color(0xFF0B3B8C),
                     ),
                   ),
-                );
-              },
+                ),
+              ),
             ),
             const SizedBox(height: 6),
             // Hidden YouTube player

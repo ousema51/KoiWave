@@ -5,7 +5,7 @@ import '../services/music_service.dart';
 import '../widgets/song_tile.dart';
 
 class HomeScreen extends StatefulWidget {
-  final Function(Song) onSongSelected;
+  final void Function(Song, [List<Song>?]) onSongSelected;
 
   const HomeScreen({super.key, required this.onSongSelected});
 
@@ -115,7 +115,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ),
                                 child: _TrendingCard(
                                   song: song,
-                                  onTap: () => widget.onSongSelected(song),
+                                  onTap: () => widget.onSongSelected(song, _trending),
                                 ),
                               );
                             },
@@ -156,7 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               .map(
                                 (song) => SongTile(
                                   song: song,
-                                  onTap: () => widget.onSongSelected(song),
+                                  onTap: () => widget.onSongSelected(song, _recentHistory),
                                 ),
                               ),
                         ],
@@ -178,7 +178,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ..._suggestions.map(
                       (song) => SongTile(
                         song: song,
-                        onTap: () => widget.onSongSelected(song),
+                        onTap: () => widget.onSongSelected(song, _suggestions),
                       ),
                     ),
                   ],
@@ -285,6 +285,7 @@ class _TrendingCard extends StatelessWidget {
   }
 }
 
+// ignore: unused_element
 class _RecentCard extends StatelessWidget {
   final Song song;
   final VoidCallback onTap;

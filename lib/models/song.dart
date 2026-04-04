@@ -23,7 +23,8 @@ class Song {
 
   factory Song.fromJson(Map<String, dynamic> json) {
     return Song(
-      id: (json['id'] ?? json['_id'] ?? '').toString(),
+      id: (json['id'] ?? json['song_id'] ?? json['videoId'] ?? json['_id'] ?? '')
+          .toString(),
       title: (json['name'] ?? json['title'] ?? 'Unknown').toString(),
       artist: _parsePrimaryArtist(json['artists'] ?? json['artist']),
       artists: _parseAllArtists(json['artists'] ?? json['artist']),

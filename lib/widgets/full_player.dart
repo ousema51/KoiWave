@@ -3,13 +3,28 @@ import 'package:cached_network_image/cached_network_image.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 
 class FullPlayerScreen extends StatefulWidget {
   final VoidCallback onClose;
   final Song? currentSong;
+  final bool isShuffle;
+  final QueueRepeatMode repeatMode;
+  final VoidCallback onToggleShuffle;
+  final VoidCallback onCycleRepeatMode;
+  final Future<void> Function() onNext;
+  final Future<void> Function() onPrevious;
 
-  const FullPlayerScreen({super.key, required this.onClose, this.currentSong});
+  const FullPlayerScreen({
+    super.key,
+    required this.onClose,
+    this.currentSong,
+    required this.isShuffle,
+    required this.repeatMode,
+    required this.onToggleShuffle,
+    required this.onCycleRepeatMode,
+    required this.onNext,
+    required this.onPrevious,
+  });
 
   @override
   State<FullPlayerScreen> createState() => _FullPlayerScreenState();
@@ -19,14 +34,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
     with TickerProviderStateMixin {
   bool _isPlaying = false;
   bool _isLiked = false;
-  bool _isShuffle = false;
-  int _repeatMode = 0;
   double _currentSliderValue = 0.0;
+  bool _isSeeking = false;
+  Duration _position = Duration.zero;
+  Duration _duration = Duration.zero;
   late AnimationController _slideController;
   late Animation<Offset> _slideAnimation;
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
-  YoutubePlayerController? _ytController;
 
   @override
   void initState() {
@@ -41,32 +56,15 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
         );
     _slideController.forward();
     _checkLiked();
-    
-    // Initialize player for current song
-    if (widget.currentSong != null) {
-      _setupPlayer(widget.currentSong!);
-    }
+    _isPlaying = _player.isPlaying;
+    _position = _player.position;
+    _duration = _player.duration;
+    _syncProgressFromPlayer();
     
     // Listen to player state changes
     _player.playingNotifier.addListener(_onPlayerStateChanged);
-  }
-
-  void _setupPlayer(Song song) {
-    _player.loadSong(song);
-    _ytController = _player.controller;
-    _isPlaying = _player.isPlaying;
-    
-    // Ensure player plays after loading
-    Future.delayed(const Duration(milliseconds: 500), () {
-      if (mounted && _ytController != null) {
-        try {
-          _player.play();
-          if (mounted) setState(() => _isPlaying = true);
-        } catch (e) {
-          debugPrint('Error starting playback: $e');
-        }
-      }
-    });
+    _player.positionNotifier.addListener(_onPlayerProgressChanged);
+    _player.durationNotifier.addListener(_onPlayerProgressChanged);
   }
 
   void _onPlayerStateChanged() {
@@ -75,16 +73,29 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
     }
   }
 
+  void _syncProgressFromPlayer() {
+    _position = _player.position;
+    _duration = _player.duration;
+    if (!_isSeeking) {
+      final totalMs = _duration.inMilliseconds;
+      _currentSliderValue = totalMs > 0
+          ? (_position.inMilliseconds / totalMs).clamp(0.0, 1.0)
+          : 0.0;
+    }
+  }
+
+  void _onPlayerProgressChanged() {
+    if (!mounted) return;
+    setState(_syncProgressFromPlayer);
+  }
+
   @override
   void didUpdateWidget(FullPlayerScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentSong?.id != widget.currentSong?.id) {
-      _currentSliderValue = 0.0;
-      _isPlaying = false;
       _checkLiked();
-      if (widget.currentSong != null) {
-        _setupPlayer(widget.currentSong!);
-      }
+      _isSeeking = false;
+      _syncProgressFromPlayer();
     }
   }
 
@@ -102,6 +113,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
   void dispose() {
     _slideController.dispose();
     _player.playingNotifier.removeListener(_onPlayerStateChanged);
+    _player.positionNotifier.removeListener(_onPlayerProgressChanged);
+    _player.durationNotifier.removeListener(_onPlayerProgressChanged);
     super.dispose();
   }
 
@@ -130,19 +143,11 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
     }
   }
 
-  String _formatTime(double fraction) {
-    final totalDuration = widget.currentSong?.duration ?? 230;
-    final int totalSeconds = (fraction * totalDuration).toInt();
+  String _formatDurationValue(Duration duration) {
+    final int totalSeconds = duration.inSeconds;
     final int minutes = totalSeconds ~/ 60;
     final int seconds = totalSeconds % 60;
     return '$minutes:${seconds.toString().padLeft(2, '0')}';
-  }
-
-  String _formatDuration(int? seconds) {
-    if (seconds == null) return '0:00';
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    return '$m:${s.toString().padLeft(2, '0')}';
   }
 
   @override
@@ -167,14 +172,6 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
-                  // Hidden YouTube player (audio-only)
-                  if (_ytController != null)
-                    SizedBox(
-                      width: 0,
-                      height: 0,
-                      child: YoutubePlayer(controller: _ytController!),
-                    ),
-                  
                   // Top bar
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -377,9 +374,19 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       trackHeight: 3,
                     ),
                     child: Slider(
-                      value: _currentSliderValue,
-                      onChanged: (val) =>
-                          setState(() => _currentSliderValue = val),
+                      value: _currentSliderValue.clamp(0.0, 1.0),
+                      onChangeStart: (_) {
+                        setState(() => _isSeeking = true);
+                      },
+                      onChanged: (val) {
+                        setState(() => _currentSliderValue = val.clamp(0.0, 1.0));
+                      },
+                      onChangeEnd: (val) async {
+                        await _player.seekToFraction(val);
+                        if (mounted) {
+                          setState(() => _isSeeking = false);
+                        }
+                      },
                     ),
                   ),
 
@@ -390,14 +397,20 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          _formatTime(_currentSliderValue),
+                          _formatDurationValue(
+                            Duration(
+                              milliseconds: (_duration.inMilliseconds *
+                                      _currentSliderValue)
+                                  .round(),
+                            ),
+                          ),
                           style: TextStyle(
                             color: Colors.grey[400],
                             fontSize: 12,
                           ),
                         ),
                         Text(
-                          _formatDuration(song?.duration),
+                          _formatDurationValue(_duration),
                           style: TextStyle(
                             color: Colors.grey[400],
                             fontSize: 12,
@@ -416,13 +429,12 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                       IconButton(
                         icon: Icon(
                           Icons.shuffle_rounded,
-                          color: _isShuffle
+                          color: widget.isShuffle
                               ? const Color(0xFF0B3B8C)
                               : Colors.grey[400],
                           size: 24,
                         ),
-                        onPressed: () =>
-                            setState(() => _isShuffle = !_isShuffle),
+                        onPressed: widget.onToggleShuffle,
                       ),
                       IconButton(
                         icon: const Icon(
@@ -430,16 +442,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                           color: Colors.white,
                           size: 36,
                         ),
-                        onPressed: () {},
+                        onPressed: widget.onPrevious,
                       ),
                       GestureDetector(
-                        onTap: () {
+                        onTap: () async {
                           if (_isPlaying) {
-                            _player.pause();
-                            setState(() => _isPlaying = false);
+                            await _player.pause();
                           } else {
-                            _player.play();
-                            setState(() => _isPlaying = true);
+                            await _player.play();
                           }
                         },
                         child: Container(
@@ -470,20 +480,19 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                           color: Colors.white,
                           size: 36,
                         ),
-                        onPressed: () {},
+                        onPressed: widget.onNext,
                       ),
                       IconButton(
                         icon: Icon(
-                          _repeatMode == 2
+                            widget.repeatMode == QueueRepeatMode.one
                               ? Icons.repeat_one_rounded
                               : Icons.repeat_rounded,
-                          color: _repeatMode > 0
+                            color: widget.repeatMode != QueueRepeatMode.off
                               ? const Color(0xFF0B3B8C)
                               : Colors.grey[400],
                           size: 24,
                         ),
-                        onPressed: () =>
-                            setState(() => _repeatMode = (_repeatMode + 1) % 3),
+                        onPressed: widget.onCycleRepeatMode,
                       ),
                     ],
                   ),

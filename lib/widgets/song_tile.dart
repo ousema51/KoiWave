@@ -7,6 +7,8 @@ class SongTile extends StatelessWidget {
   final VoidCallback? onTap;
   final bool? isLiked;
   final VoidCallback? onLike;
+  final IconData? trailingIcon;
+  final Color? trailingIconColor;
   final int? trackNumber;
 
   const SongTile({
@@ -15,6 +17,8 @@ class SongTile extends StatelessWidget {
     this.onTap,
     this.isLiked,
     this.onLike,
+    this.trailingIcon,
+    this.trailingIconColor,
     this.trackNumber,
   });
 
@@ -63,13 +67,15 @@ class SongTile extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: TextStyle(color: Colors.grey[400], fontSize: 12),
       ),
-      trailing: onLike != null
+        trailing: onLike != null
           ? IconButton(
               icon: Icon(
-                isLiked == true ? Icons.favorite : Icons.favorite_border,
-                color: isLiked == true
-                    ? const Color(0xFF0B3B8C)
-                    : Colors.grey[400],
+            trailingIcon ??
+              (isLiked == true ? Icons.favorite : Icons.favorite_border),
+            color: trailingIconColor ??
+              (isLiked == true
+                ? const Color(0xFF0B3B8C)
+                : Colors.grey[400]),
                 size: 20,
               ),
               onPressed: onLike,

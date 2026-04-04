@@ -7,7 +7,7 @@ import '../services/music_service.dart';
 import '../widgets/song_tile.dart';
 
 class SearchScreen extends StatefulWidget {
-  final Function(Song) onSongSelected;
+  final void Function(Song, [List<Song>?]) onSongSelected;
 
   const SearchScreen({super.key, required this.onSongSelected});
 
@@ -16,7 +16,7 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  TextEditingController get _searchController => TextEditingController();
+  final TextEditingController _searchController = TextEditingController();
   final MusicService _musicService = MusicService();
   Timer? _debounce;
 
@@ -165,7 +165,7 @@ class _SearchScreenState extends State<SearchScreen> {
           const SizedBox(height: 8),
           ..._songResults.map((song) => SongTile(
                 song: song,
-                onTap: () => widget.onSongSelected(song),
+                onTap: () => widget.onSongSelected(song, _songResults),
               )),
           const SizedBox(height: 20),
         ],

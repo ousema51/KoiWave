@@ -148,12 +148,80 @@ class MusicService {
   Future<List<Song>> getLikedSongs() async {
     final result = await _api.get('/library/liked');
     if (result['success'] == true && result['data'] != null) {
-      final List<dynamic> items = result['data'] as List<dynamic>? ?? [];
+      final data = result['data'];
+      final List<dynamic> items = data is List
+          ? data
+          : (data is Map<String, dynamic>
+                ? (data['songs'] as List<dynamic>? ?? [])
+                : []);
       return items
           .map((e) => Song.fromJson(e as Map<String, dynamic>))
           .toList();
     }
     return [];
+  }
+
+  // --- Playlists ---
+  Future<List<Map<String, dynamic>>> getMyPlaylists() async {
+    final result = await _api.get('/playlists/mine');
+    if (result['success'] == true && result['data'] != null) {
+      final List<dynamic> items = result['data'] as List<dynamic>? ?? [];
+      return items
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    }
+    return [];
+  }
+
+  Future<Map<String, dynamic>> createPlaylist(String name,
+      {String description = '', bool isPublic = true}) async {
+    return _api.post('/playlists', {
+      'name': name,
+      'description': description,
+      'is_public': isPublic,
+    });
+  }
+
+  Future<Map<String, dynamic>> addSongToPlaylist(
+    String playlistId,
+    Song song,
+  ) async {
+    return _api.post('/playlists/$playlistId/songs', {
+      'song_id': song.id,
+      'title': song.title,
+      'artist': song.artist,
+      'cover_url': song.coverUrl,
+      'duration': song.duration,
+    });
+  }
+
+  Future<Map<String, dynamic>?> getPlaylist(String playlistId) async {
+    final result = await _api.get('/playlists/$playlistId');
+    if (result['success'] == true && result['data'] != null) {
+      return Map<String, dynamic>.from(result['data']);
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> renamePlaylist(
+    String playlistId,
+    String name,
+  ) async {
+    return _api.put('/playlists/$playlistId', {
+      'name': name,
+    });
+  }
+
+  Future<Map<String, dynamic>> deletePlaylist(String playlistId) async {
+    return _api.delete('/playlists/$playlistId');
+  }
+
+  Future<Map<String, dynamic>> removeSongFromPlaylist(
+    String playlistId,
+    String songId,
+  ) async {
+    return _api.delete('/playlists/$playlistId/songs/$songId');
   }
 
   // --- History / Suggestions ---

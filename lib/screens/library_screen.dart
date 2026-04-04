@@ -2,12 +2,18 @@ import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
 import '../services/auth_service.dart';
-import '../widgets/song_tile.dart';
 
 class LibraryScreen extends StatefulWidget {
-  final Function(Song) onSongSelected;
+  final void Function(Song, [List<Song>?]) onSongSelected;
+  final ValueChanged<String> onOpenPlaylist;
+  final VoidCallback onOpenLikedSongs;
 
-  const LibraryScreen({super.key, required this.onSongSelected});
+  const LibraryScreen({
+    super.key,
+    required this.onSongSelected,
+    required this.onOpenPlaylist,
+    required this.onOpenLikedSongs,
+  });
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
@@ -17,7 +23,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
   final MusicService _musicService = MusicService();
   final AuthService _authService = AuthService();
   List<Song> _likedSongs = [];
-  final List<String> _playlists = [];
+  List<Map<String, dynamic>> _playlists = [];
   bool _isLoading = true;
   bool _isLoggedIn = false;
 
@@ -34,9 +40,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
     if (_isLoggedIn) {
       try {
         final likedSongs = await _musicService.getLikedSongs();
+        final playlists = await _musicService.getMyPlaylists();
         if (mounted) {
           setState(() {
             _likedSongs = likedSongs;
+            _playlists = playlists;
             _isLoading = false;
           });
         }
@@ -81,8 +89,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             ),
             TextButton(
               onPressed: () {
-                if (newName.isNotEmpty) {
-                  setState(() => _playlists.add(newName));
+                if (newName.trim().isNotEmpty) {
+                  _createPlaylist(newName.trim());
                 }
                 Navigator.pop(context);
               },
@@ -93,6 +101,39 @@ class _LibraryScreenState extends State<LibraryScreen> {
         );
       },
     );
+  }
+
+  Future<void> _createPlaylist(String name) async {
+    try {
+      final result = await _musicService.createPlaylist(name);
+      if (!mounted) return;
+
+      if (result['success'] == true && result['data'] != null) {
+        setState(() {
+          _playlists.insert(0, Map<String, dynamic>.from(result['data']));
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(result['message']?.toString() ?? 'Could not create playlist'),
+            backgroundColor: Colors.red[700],
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Could not create playlist: $e'),
+          backgroundColor: Colors.red[700],
+        ),
+      );
+    }
+  }
+
+  int _playlistSongCount(Map<String, dynamic> playlist) {
+    final songs = playlist['songs'];
+    return songs is List ? songs.length : 0;
   }
 
   @override
@@ -197,12 +238,12 @@ class _LibraryScreenState extends State<LibraryScreen> {
                             style: TextStyle(
                                 color: Colors.grey[500], fontSize: 13),
                           ),
-                          onTap: () => _showLikedSongs(),
+                          onTap: widget.onOpenLikedSongs,
                         ),
                       ),
 
                       // User playlists
-                      ..._playlists.map((name) => Container(
+                          ..._playlists.map((playlist) => Container(
                             margin: const EdgeInsets.only(bottom: 4),
                             child: ListTile(
                               contentPadding: const EdgeInsets.symmetric(
@@ -220,77 +261,28 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                     size: 24),
                               ),
                               title: Text(
-                                name,
+                                (playlist['name'] ?? 'Untitled Playlist')
+                                    .toString(),
                                 style: const TextStyle(
                                     fontWeight: FontWeight.w500,
                                     fontSize: 15),
                               ),
                               subtitle: Text(
-                                'Playlist',
+                                'Playlist • ${_playlistSongCount(playlist)} songs',
                                 style: TextStyle(
                                     color: Colors.grey[500],
                                     fontSize: 13),
                               ),
-                              onTap: () {},
+                              onTap: () {
+                                final playlistId =
+                                    (playlist['_id'] ?? '').toString();
+                                if (playlistId.isEmpty) return;
+                                widget.onOpenPlaylist(playlistId);
+                              },
                             ),
                           )),
                     ],
                   ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showLikedSongs() {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF1A1A1A),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.8,
-        maxChildSize: 0.95,
-        minChildSize: 0.5,
-        expand: false,
-        builder: (context, scrollController) => Column(
-          children: [
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Text(
-                'Liked Songs',
-                style: TextStyle(
-                    fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-            ),
-            if (_likedSongs.isEmpty)
-              const Expanded(
-                child: Center(
-                  child: Text(
-                    'No liked songs yet',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-              )
-            else
-              Expanded(
-                child: ListView.builder(
-                  controller: scrollController,
-                  itemCount: _likedSongs.length,
-                  itemBuilder: (context, index) {
-                    final song = _likedSongs[index];
-                    return SongTile(
-                      song: song,
-                      onTap: () {
-                        Navigator.pop(context);
-                        widget.onSongSelected(song);
-                      },
-                    );
-                  },
                 ),
               ),
           ],
