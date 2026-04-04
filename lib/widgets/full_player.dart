@@ -4,7 +4,6 @@ import '../models/song.dart';
 import '../services/music_service.dart';
 import '../services/player_service.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
-import 'dart:async';
 
 class FullPlayerScreen extends StatefulWidget {
   final VoidCallback onClose;
@@ -42,10 +41,37 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
         );
     _slideController.forward();
     _checkLiked();
+    
+    // Initialize player for current song
     if (widget.currentSong != null) {
-      _player.loadSong(widget.currentSong!);
-      _ytController = _player.controller;
-      _isPlaying = _player.isPlaying;
+      _setupPlayer(widget.currentSong!);
+    }
+    
+    // Listen to player state changes
+    _player.playingNotifier.addListener(_onPlayerStateChanged);
+  }
+
+  void _setupPlayer(Song song) {
+    _player.loadSong(song);
+    _ytController = _player.controller;
+    _isPlaying = _player.isPlaying;
+    
+    // Ensure player plays after loading
+    Future.delayed(const Duration(milliseconds: 500), () {
+      if (mounted && _ytController != null) {
+        try {
+          _player.play();
+          if (mounted) setState(() => _isPlaying = true);
+        } catch (e) {
+          debugPrint('Error starting playback: $e');
+        }
+      }
+    });
+  }
+
+  void _onPlayerStateChanged() {
+    if (mounted) {
+      setState(() => _isPlaying = _player.isPlaying);
     }
   }
 
@@ -57,23 +83,25 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
       _isPlaying = false;
       _checkLiked();
       if (widget.currentSong != null) {
-        _player.loadSong(widget.currentSong!);
-        _ytController = _player.controller;
-        _isPlaying = _player.isPlaying;
+        _setupPlayer(widget.currentSong!);
       }
     }
   }
 
   Future<void> _checkLiked() async {
     if (widget.currentSong == null) return;
-    final liked = await _musicService.checkLiked(widget.currentSong!.id);
-    if (mounted) setState(() => _isLiked = liked);
+    try {
+      final liked = await _musicService.checkLiked(widget.currentSong!.id);
+      if (mounted) setState(() => _isLiked = liked);
+    } catch (e) {
+      debugPrint('Error checking liked status: $e');
+    }
   }
 
   @override
   void dispose() {
     _slideController.dispose();
-    _ytController?.close();
+    _player.playingNotifier.removeListener(_onPlayerStateChanged);
     super.dispose();
   }
 
@@ -85,12 +113,21 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
   Future<void> _toggleLike() async {
     if (widget.currentSong == null) return;
     final song = widget.currentSong!;
-    if (_isLiked) {
-      await _musicService.unlikeSong(song.id);
-    } else {
-      await _musicService.likeSong(song.id, song.toMetadata());
+    try {
+      if (_isLiked) {
+        await _musicService.unlikeSong(song.id);
+      } else {
+        await _musicService.likeSong(song.id, song.toMetadata());
+      }
+      if (mounted) setState(() => _isLiked = !_isLiked);
+    } catch (e) {
+      debugPrint('Error toggling like: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
-    if (mounted) setState(() => _isLiked = !_isLiked);
   }
 
   String _formatTime(double fraction) {
@@ -102,7 +139,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
   }
 
   String _formatDuration(int? seconds) {
-    if (seconds == null) return '3:50';
+    if (seconds == null) return '0:00';
     final m = seconds ~/ 60;
     final s = seconds % 60;
     return '$m:${s.toString().padLeft(2, '0')}';
@@ -130,13 +167,14 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
               padding: const EdgeInsets.symmetric(horizontal: 24),
               child: Column(
                 children: [
-                  // Hidden YouTube player
+                  // Hidden YouTube player (audio-only)
                   if (_ytController != null)
                     SizedBox(
-                      width: 1,
-                      height: 1,
+                      width: 0,
+                      height: 0,
                       child: YoutubePlayer(controller: _ytController!),
                     ),
+                  
                   // Top bar
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -170,6 +208,8 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                                 fontWeight: FontWeight.bold,
                                 color: Colors.white,
                               ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ],
                         ),
@@ -289,7 +329,7 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              song?.artist ?? '',
+                              song?.artist ?? 'Unknown Artist',
                               style: TextStyle(
                                 fontSize: 16,
                                 color: Colors.grey[400],
@@ -396,8 +436,10 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
                         onTap: () {
                           if (_isPlaying) {
                             _player.pause();
+                            setState(() => _isPlaying = false);
                           } else {
                             _player.play();
+                            setState(() => _isPlaying = true);
                           }
                         },
                         child: Container(

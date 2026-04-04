@@ -21,43 +21,87 @@ except Exception as e:
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _safe_str(value):
+    """Safely convert to string with UTF-8 encoding."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        # Ensure string is valid UTF-8
+        try:
+            value.encode('utf-8')
+            return value
+        except UnicodeEncodeError:
+            # If encoding fails, encode with errors='replace'
+            return value.encode('utf-8', errors='replace').decode('utf-8')
+    return str(value)
+
+
 def _get_thumbnail(r):
+    """Extract thumbnail URL with fallback handling."""
+    if r is None:
+        return None
+        
     thumbs = r.get("thumbnails")
     if isinstance(thumbs, list) and thumbs:
-        url = thumbs[-1].get("url")
+        url = thumbs[-1].get("url") if thumbs[-1] else None
         if url:
-            # ensure url is absolute and uses https
-            if isinstance(url, str) and url.startswith("//"):
+            url = _safe_str(url)
+            # Ensure url is absolute and uses https
+            if url and url.startswith("//"):
                 return f"https:{url}"
-            if isinstance(url, str) and url.startswith("http"):
+            if url and url.startswith("http"):
                 return url
-            return f"https:{url}"
+            if url:
+                return f"https:{url}"
 
     thumb_obj = r.get("thumbnail")
     if isinstance(thumb_obj, dict):
         inner = thumb_obj.get("thumbnails")
         if isinstance(inner, list) and inner:
-            url = inner[-1].get("url")
+            url = inner[-1].get("url") if inner[-1] else None
             if url:
-                return url
+                url = _safe_str(url)
+                if url and url.startswith("http"):
+                    return url
+                if url:
+                    return f"https:{url}"
 
+    # Generate YouTube CDN thumbnail as fallback
     vid = r.get("videoId") or r.get("id")
     if vid:
-        return "https://img.youtube.com/vi/{}/hqdefault.jpg".format(vid)
+        vid = _safe_str(vid)
+        if vid:
+            return "https://img.youtube.com/vi/{}/hqdefault.jpg".format(vid)
 
     return None
 
 
 def _normalize(r):
+    """Normalize song result from ytmusicapi with UTF-8 encoding."""
+    if r is None:
+        return None
+        
     artists = r.get("artists") or []
-    artist = artists[0].get("name") if artists else r.get("artist")
+    artist = None
+    if artists:
+        if isinstance(artists[0], dict):
+            artist = artists[0].get("name")
+        else:
+            artist = artists[0]
+    if not artist:
+        artist = r.get("artist")
+    
+    artist = _safe_str(artist) or "Unknown Artist"
 
     return {
-        "id": r.get("videoId") or r.get("id"),
-        "title": r.get("title"),
-        "artist": artist or "Unknown Artist",
+        "id": _safe_str(r.get("videoId") or r.get("id")),
+        "title": _safe_str(r.get("title")) or "Unknown",
+        "name": _safe_str(r.get("title")) or "Unknown",
+        "artist": artist,
         "duration": r.get("duration"),
         "thumbnail": _get_thumbnail(r),
+        "image": _get_thumbnail(r),
+        "cover_url": _get_thumbnail(r),
     }
 
 
@@ -69,11 +113,18 @@ def search_songs(query="", page=1, limit=20):
     if not ytmusic:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
+        query = _safe_str(query)
         start = (page - 1) * limit
         raw = ytmusic.search(query, filter="songs", limit=start + limit) or []
-        songs = [_normalize(r) for r in raw[start:start + limit] if r.get("videoId")]
+        songs = []
+        for r in raw[start:start + limit]:
+            if r.get("videoId"):
+                normalized = _normalize(r)
+                if normalized:
+                    songs.append(normalized)
         return {"success": True, "data": songs}
     except Exception as e:
+        logger.error("Search error: {}".format(e))
         return {"success": False, "message": str(e)}
 
 
@@ -92,79 +143,19 @@ PIPED_INSTANCES = [
     "https://pipedapi.r4fo.com",
     "https://pipedapi.leptons.xyz",
 ]
-"""
 
-def get_stream_url(video_id=""):
-    """"Return a direct audio URL using yt-dlp (anti-bot fixed).""""
-    if not video_id or not video_id.strip():
-        return {"success": False, "message": "No video_id provided"}
-
-    video_id = video_id.strip()
-
-    try:
-        ydl_opts = {
-            "format": "bestaudio[ext=m4a]/bestaudio/best",
-            "quiet": True,
-            "noplaylist": True,
-
-            # 🔥 CRITICAL FIXES
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "web"],  # bypass bot checks
-                }
-            },
-
-            # Pretend to be a real browser
-            "http_headers": {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36",
-                "Accept-Language": "en-US,en;q=0.9",
-            },
-
-            # Avoid extra requests
-            "skip_download": True,
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            url = f"https://music.youtube.com/watch?v={video_id}"  # 🔥 important
-            info = ydl.extract_info(url, download=False)
-
-            # safer extraction
-            audio_url = None
-
-            if "url" in info:
-                audio_url = info["url"]
-            elif "formats" in info:
-                formats = info["formats"]
-                # pick best audio manually
-                best_audio = next(
-                    (f for f in formats if f.get("acodec") != "none"),
-                    None
-                )
-                if best_audio:
-                    audio_url = best_audio.get("url")
-
-        if not audio_url:
-            return {"success": False, "message": "Failed to extract audio URL"}
-
-        return {
-            "success": True,
-            "data": {
-                "audio_url": audio_url,
-            },
-        }
-
-    except Exception as e:
-        return {"success": False, "message": f"Error: {str(e)}"}
-"""
 
 def get_song_by_id(video_id=""):
+    """Get song metadata with UTF-8 encoding and thumbnail fallback."""
     if not video_id or not video_id.strip():
         return {"success": False, "message": "No video_id provided"}
 
-    video_id = video_id.strip()
+    video_id = _safe_str(video_id.strip())
+    if not video_id:
+        return {"success": False, "message": "Invalid video_id"}
 
     meta = {
-        "title": None,  # Start with None to ensure fallback logic
+        "title": None,
         "artist": "Unknown Artist",
         "duration": None,
         "thumbnail": f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg",
@@ -175,21 +166,29 @@ def get_song_by_id(video_id=""):
             info = ytmusic.get_song(video_id)
             vd = info.get("videoDetails") or {}
             thumbs = vd.get("thumbnail", {}).get("thumbnails") or []
-            meta["title"] = vd.get("title") or meta["title"]
-            meta["artist"] = vd.get("author") or meta["artist"]
-            meta["duration"] = vd.get("lengthSeconds") or meta["duration"]
+            
+            meta["title"] = _safe_str(vd.get("title"))
+            meta["artist"] = _safe_str(vd.get("author")) or meta["artist"]
+            meta["duration"] = vd.get("lengthSeconds")
+            
             if thumbs:
-                turl = thumbs[-1].get("url")
+                turl = thumbs[-1].get("url") if thumbs[-1] else None
                 if turl:
-                    if isinstance(turl, str) and turl.startswith("//"):
-                        meta["thumbnail"] = f"https:{turl}"
-                    else:
-                        meta["thumbnail"] = turl
+                    turl = _safe_str(turl)
+                    if turl:
+                        if turl.startswith("//"):
+                            meta["thumbnail"] = f"https:{turl}"
+                        else:
+                            meta["thumbnail"] = turl
         except Exception as e:
             logger.error(f"Failed to fetch song metadata: {e}")
 
     # Ensure title fallback is meaningful
     meta["title"] = meta["title"] or f"Unknown Title ({video_id})"
+    
+    # Ensure all strings are UTF-8 safe
+    meta["title"] = _safe_str(meta["title"])
+    meta["artist"] = _safe_str(meta["artist"])
 
     data = {
         "id": video_id,
@@ -199,15 +198,6 @@ def get_song_by_id(video_id=""):
     data.update(meta)
     return {"success": True, "data": data}
 
-"""
-def get_stream_from_search(query="", index=0):
-    result = search_songs(query, limit=index + 5)
-    if not result.get("success") or not result.get("data"):
-        return {"success": False, "message": "No results"}
-    songs = result["data"]
-    chosen = songs[index] if index < len(songs) else songs[0]
-    return get_stream_url(chosen["id"])
-"""
 
 # ---------------------------------------------------------------------------
 # Albums / Artists / Trending
@@ -217,20 +207,30 @@ def search_albums(query="", page=1, limit=20):
     if not ytmusic:
         return {"success": True, "data": []}
     try:
+        query = _safe_str(query)
         raw = ytmusic.search(query, filter="albums", limit=limit) or []
         start = (page - 1) * limit
-        return {"success": True, "data": [
-            {
-                "id": r.get("browseId"),
-                "title": r.get("title"),
-                "artist": (r.get("artists") or [{}])[0].get("name"),
+        albums = []
+        for r in raw[start:start + limit]:
+            artists = r.get("artists") or [{}]
+            artist_name = None
+            if artists and isinstance(artists[0], dict):
+                artist_name = artists[0].get("name")
+            elif artists:
+                artist_name = artists[0]
+            
+            album = {
+                "id": _safe_str(r.get("browseId")),
+                "title": _safe_str(r.get("title")) or "Unknown",
+                "artist": _safe_str(artist_name) or "Unknown",
                 "thumbnail": _get_thumbnail(r),
                 "cover_url": _get_thumbnail(r),
                 "image": _get_thumbnail(r),
             }
-            for r in raw[start:start + limit]
-        ]}
-    except Exception:
+            albums.append(album)
+        return {"success": True, "data": albums}
+    except Exception as e:
+        logger.error("Album search error: {}".format(e))
         return {"success": True, "data": []}
 
 
@@ -238,17 +238,21 @@ def search_artists(query="", page=1, limit=20):
     if not ytmusic:
         return {"success": True, "data": []}
     try:
+        query = _safe_str(query)
         raw = ytmusic.search(query, filter="artists", limit=limit) or []
         start = (page - 1) * limit
-        return {"success": True, "data": [
-            {
-                "id": r.get("browseId"),
-                "name": r.get("artist"),
+        artists = []
+        for r in raw[start:start + limit]:
+            artist = {
+                "id": _safe_str(r.get("browseId")),
+                "name": _safe_str(r.get("artist")) or "Unknown",
                 "thumbnail": _get_thumbnail(r),
+                "image": _get_thumbnail(r),
             }
-            for r in raw[start:start + limit]
-        ]}
-    except Exception:
+            artists.append(artist)
+        return {"success": True, "data": artists}
+    except Exception as e:
+        logger.error("Artist search error: {}".format(e))
         return {"success": True, "data": []}
 
 
@@ -256,17 +260,27 @@ def get_album_by_id(album_id=""):
     if not ytmusic:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
+        album_id = _safe_str(album_id)
         album = ytmusic.get_album(album_id)
+        
+        artists = album.get("artists") or [{}]
+        artist_name = None
+        if artists and isinstance(artists[0], dict):
+            artist_name = artists[0].get("name")
+        elif artists:
+            artist_name = artists[0]
+        
         return {"success": True, "data": {
             "id": album_id,
-            "title": album.get("title"),
-            "artist": (album.get("artists") or [{}])[0].get("name"),
+            "title": _safe_str(album.get("title")) or "Unknown",
+            "artist": _safe_str(artist_name) or "Unknown",
             "thumbnail": _get_thumbnail(album),
             "cover_url": _get_thumbnail(album),
             "image": _get_thumbnail(album),
-            "tracks": [_normalize(t) for t in (album.get("tracks") or [])],
+            "tracks": [_normalize(t) for t in (album.get("tracks") or []) if t],
         }}
     except Exception as e:
+        logger.error("Album get error: {}".format(e))
         return {"success": False, "message": str(e)}
 
 
@@ -274,16 +288,21 @@ def get_artist_by_id(artist_id=""):
     if not ytmusic:
         return {"success": False, "message": "ytmusicapi not available"}
     try:
+        artist_id = _safe_str(artist_id)
         artist = ytmusic.get_artist(artist_id)
+        
+        songs = [_normalize(s) for s in (artist.get("songs", {}).get("results") or []) if s]
+        
         return {"success": True, "data": {
             "id": artist_id,
-            "name": artist.get("name"),
+            "name": _safe_str(artist.get("name")) or "Unknown",
             "thumbnail": _get_thumbnail(artist),
             "image": _get_thumbnail(artist),
             "image_url": _get_thumbnail(artist),
-            "songs": [_normalize(s) for s in (artist.get("songs", {}).get("results") or [])],
+            "songs": songs,
         }}
     except Exception as e:
+        logger.error("Artist get error: {}".format(e))
         return {"success": False, "message": str(e)}
 
 
@@ -291,12 +310,16 @@ def get_trending():
     if not ytmusic:
         return {"success": True, "data": []}
     try:
-        # Prefer US-focused trending results
         raw = ytmusic.search("top hits USA", filter="songs", limit=40) or []
-        songs = [r for r in raw if r.get("videoId")]
-        # normalize and return up to 20
-        return {"success": True, "data": [_normalize(r) for r in songs[:20]]}
-    except Exception:
+        songs = []
+        for r in raw:
+            if r.get("videoId"):
+                normalized = _normalize(r)
+                if normalized:
+                    songs.append(normalized)
+        return {"success": True, "data": songs[:20]}
+    except Exception as e:
+        logger.error("Trending error: {}".format(e))
         return {"success": True, "data": []}
 
 
@@ -312,7 +335,8 @@ def health_check():
             r = ytmusic.search("test", filter="songs", limit=1)
             status["search"] = bool(r)
             if r:
-                status["thumbnail_test"] = _get_thumbnail(r[0])
+                thumb = _get_thumbnail(r[0])
+                status["thumbnail_test"] = thumb if thumb else "null"
         except Exception as e:
             status["search_error"] = str(e)
     return {"success": True, "data": status}
