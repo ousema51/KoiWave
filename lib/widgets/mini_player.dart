@@ -113,7 +113,7 @@ class _MiniPlayerState extends State<MiniPlayer>
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
-              color: Colors.black.withOpacity(0.4),
+              color: Colors.black.withValues(alpha: 0.4),
               blurRadius: 8,
               offset: const Offset(0, 2),
             ),
@@ -293,7 +293,19 @@ class _MiniPlayerState extends State<MiniPlayer>
               SizedBox(
                 width: 1,
                 height: 1,
-                child: YoutubePlayer(controller: _ytController!),
+                child: OverflowBox(
+                  minWidth: 160,
+                  maxWidth: 160,
+                  minHeight: 90,
+                  maxHeight: 90,
+                  alignment: Alignment.bottomRight,
+                  child: IgnorePointer(
+                    child: Opacity(
+                      opacity: 0.01,
+                      child: YoutubePlayer(controller: _ytController!),
+                    ),
+                  ),
+                ),
               ),
           ],
         ),

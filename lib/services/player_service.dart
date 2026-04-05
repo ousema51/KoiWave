@@ -174,6 +174,37 @@ class PlayerService {
     }
   }
 
+  Future<void> _loadSongWithYoutubeIFrame(Song song) async {
+    _usingAudioEngine = false;
+    _ensureController();
+
+    final controller = _controller!;
+    await controller.loadVideoById(videoId: song.id);
+
+    // On Android, the WebView-backed player can ignore the first play call
+    // right after load, so we retry once after a short delay.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      await controller.playVideo();
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+
+      if (_playerStateNotifier.value != yt.PlayerState.playing) {
+        await controller.playVideo();
+      }
+    } else {
+      await controller.playVideo();
+    }
+
+    if (!_isReady) {
+      _isReady = true;
+      _readyNotifier.value = true;
+    }
+
+    debugPrint(
+      '[PlayerService] Loading YouTube iframe playback: ${song.title} (ID: ${song.id})',
+    );
+  }
+
   /// Load a song and start playback using the same shared controller.
   Future<void> loadSong(
     Song song, {
@@ -193,6 +224,19 @@ class PlayerService {
         : Duration.zero;
 
     await _stopCurrentEngine();
+
+    final bool forceYoutubeEngine =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    if (forceYoutubeEngine) {
+      try {
+        await _loadSongWithYoutubeIFrame(song);
+        return;
+      } catch (e) {
+        debugPrint('[PlayerService] Android YouTube load failed: $e');
+        rethrow;
+      }
+    }
+
     String? cachedPath;
     if (!kIsWeb) {
       try {
@@ -263,13 +307,7 @@ class PlayerService {
     }
 
     try {
-      _usingAudioEngine = false;
-      _ensureController();
-      await _controller!.loadVideoById(videoId: song.id);
-      await _controller!.playVideo();
-      debugPrint(
-        '[PlayerService] Loading YouTube fallback: ${song.title} (ID: ${song.id})',
-      );
+      await _loadSongWithYoutubeIFrame(song);
     } catch (e) {
       debugPrint('[PlayerService] Load song error: $e');
       rethrow;

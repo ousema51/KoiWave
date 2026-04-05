@@ -102,30 +102,9 @@ class _MainScreenState extends State<MainScreen> {
     // song.id is the YouTube videoId from search results
     debugPrint('[MainScreen] playing song: ${song.title} (${song.id})');
 
-    // Resolve an audio stream and hand off to PlayerService.
+    // Playback is handled by youtube_player_iframe in PlayerService.
     try {
-      final streamData = await _musicService.getStreamDataWithHint(
-        song.id,
-        song.title,
-      );
-      final streamUrl = streamData?['audio_url']?.toString();
-
-      Map<String, String>? streamHeaders;
-      final rawHeaders = streamData?['headers'];
-      if (rawHeaders is Map) {
-        streamHeaders =
-            rawHeaders.map(
-              (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
-            )..removeWhere(
-              (key, value) => key.trim().isEmpty || value.trim().isEmpty,
-            );
-      }
-
-      await _player.loadSong(
-        song,
-        streamUrl: streamUrl,
-        streamHeaders: streamHeaders,
-      );
+      await _player.loadSong(song);
     } catch (e) {
       debugPrint('[MainScreen] _loadAndPlay error: $e');
       if (mounted) {
