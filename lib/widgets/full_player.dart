@@ -549,3 +549,4 @@ class _FullPlayerScreenState extends State<FullPlayerScreen>
     );
   }
 }
+

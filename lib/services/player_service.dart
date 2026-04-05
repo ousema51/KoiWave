@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:audio_service/audio_service.dart' show MediaItem;
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart' as yt;
@@ -36,6 +37,22 @@ class PlayerService {
   final ValueNotifier<Duration> _durationNotifier = ValueNotifier(Duration.zero);
 
   PlayerService._internal();
+
+  MediaItem _buildMediaItem(Song song, String sourceId) {
+    return MediaItem(
+      id: sourceId,
+      title: song.title,
+      artist: song.artist ?? 'Unknown Artist',
+      album: song.albumName ?? 'KoiWave',
+      artUri: (song.coverUrl != null && song.coverUrl!.isNotEmpty)
+          ? Uri.tryParse(song.coverUrl!)
+          : null,
+      duration: (song.duration != null && song.duration! > 0)
+          ? Duration(seconds: song.duration!)
+          : null,
+      extras: {'song_id': song.id},
+    );
+  }
 
   void _ensureController() {
     if (_controller != null) return;
@@ -140,35 +157,71 @@ class PlayerService {
         : Duration.zero;
 
     await _stopCurrentEngine();
+    String? cachedPath;
+    if (!kIsWeb) {
+      try {
+        cachedPath = await _cache.getCachedFilePath(song.id);
+      } catch (e) {
+        debugPrint('[PlayerService] Cache lookup skipped: $e');
+      }
+    }
 
-    try {
-      final cachedPath = await _cache.getCachedFilePath(song.id);
-
-      if (cachedPath != null) {
+    if (cachedPath != null) {
+      try {
         _usingAudioEngine = true;
         _ensureAudioListeners();
-        await _audioPlayer.setFilePath(cachedPath);
+        if (kIsWeb) {
+          await _audioPlayer.setFilePath(cachedPath);
+        } else {
+          final sourceId = Uri.file(cachedPath).toString();
+          await _audioPlayer.setAudioSource(
+            AudioSource.file(
+              cachedPath,
+              tag: _buildMediaItem(song, sourceId),
+            ),
+          );
+        }
         _isReady = true;
         _readyNotifier.value = true;
         _playerStateNotifier.value = yt.PlayerState.cued;
         await _audioPlayer.play();
         debugPrint('[PlayerService] Playing cached audio for: ${song.title}');
         return;
+      } catch (e) {
+        debugPrint('[PlayerService] Cached playback failed, fallback: $e');
       }
+    }
 
-      if (streamUrl != null && streamUrl.isNotEmpty) {
+    if (streamUrl != null && streamUrl.isNotEmpty) {
+      try {
         _usingAudioEngine = true;
         _ensureAudioListeners();
-        await _audioPlayer.setUrl(streamUrl);
+        if (kIsWeb) {
+          await _audioPlayer.setUrl(streamUrl);
+        } else {
+          final uri = Uri.parse(streamUrl);
+          await _audioPlayer.setAudioSource(
+            AudioSource.uri(
+              uri,
+              tag: _buildMediaItem(song, uri.toString()),
+            ),
+          );
+        }
         _isReady = true;
         _readyNotifier.value = true;
         _playerStateNotifier.value = yt.PlayerState.cued;
         await _audioPlayer.play();
-        unawaited(_cache.cacheInBackground(song.id, streamUrl));
+        if (!kIsWeb) {
+          unawaited(_cache.cacheInBackground(song.id, streamUrl));
+        }
         debugPrint('[PlayerService] Streaming audio for: ${song.title}');
         return;
+      } catch (e) {
+        debugPrint('[PlayerService] Stream playback failed, fallback: $e');
       }
+    }
 
+    try {
       _usingAudioEngine = false;
       _ensureController();
       await _controller!.loadVideoById(videoId: song.id);

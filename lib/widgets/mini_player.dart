@@ -301,3 +301,4 @@ class _MiniPlayerState extends State<MiniPlayer>
     );
   }
 }
+

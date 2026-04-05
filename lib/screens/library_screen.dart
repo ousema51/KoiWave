@@ -239,7 +239,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 fontSize: 15),
                           ),
                           subtitle: Text(
-                            'Playlist • ${_likedSongs.length} songs',
+                            'Playlist - ${_likedSongs.length} songs',
                             style: TextStyle(
                                 color: Colors.grey[500], fontSize: 13),
                           ),
@@ -273,7 +273,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                     fontSize: 15),
                               ),
                               subtitle: Text(
-                                'Playlist • ${_playlistSongCount(playlist)} songs',
+                                'Playlist - ${_playlistSongCount(playlist)} songs',
                                 style: TextStyle(
                                     color: Colors.grey[500],
                                     fontSize: 13),
@@ -296,3 +296,4 @@ class _LibraryScreenState extends State<LibraryScreen> {
     );
   }
 }
+

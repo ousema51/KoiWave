@@ -1,9 +1,21 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:just_audio_background/just_audio_background.dart';
 import 'services/auth_service.dart';
 import 'screens/auth/login_screen.dart';
 import 'screens/main_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (!kIsWeb &&
+      (defaultTargetPlatform == TargetPlatform.android ||
+          defaultTargetPlatform == TargetPlatform.iOS)) {
+    await JustAudioBackground.init(
+      androidNotificationChannelId: 'com.example.spotify_clone.audio',
+      androidNotificationChannelName: 'KoiWave Playback',
+      androidNotificationOngoing: true,
+    );
+  }
   runApp(const MyApp());
 }
 

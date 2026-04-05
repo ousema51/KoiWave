@@ -252,3 +252,4 @@ class _ArtistScreenState extends State<ArtistScreen> {
     );
   }
 }
+
