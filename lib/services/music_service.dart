@@ -7,6 +7,9 @@ import '../models/artist.dart';
 import 'api_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'youtube_stream_resolver_stub.dart'
+    if (dart.library.io) 'youtube_stream_resolver_io.dart'
+    as youtube_stream_resolver;
 // Player is unused here; playback handled by PlayerService when needed
 
 class MusicService {
@@ -17,8 +20,7 @@ class MusicService {
   final ApiService _api = ApiService();
   // PlayerService instance not required in this service
 
-  static const String _pipedRegistryUrl =
-      'https://piped-instances.kavin.rocks';
+  static const String _pipedRegistryUrl = 'https://piped-instances.kavin.rocks';
   static const Duration _pipedRequestTimeout = Duration(seconds: 8);
   static const Duration _pipedRegistryCacheTtl = Duration(minutes: 30);
 
@@ -254,9 +256,7 @@ class MusicService {
       final uri = Uri.parse('$normalizedInstance/streams/$videoId');
 
       try {
-        final response = await http
-            .get(uri)
-            .timeout(_pipedRequestTimeout);
+        final response = await http.get(uri).timeout(_pipedRequestTimeout);
         if (response.statusCode < 200 || response.statusCode >= 300) {
           continue;
         }
@@ -307,9 +307,9 @@ class MusicService {
 
     for (final normalizedInstance in instances) {
       for (final filter in filters) {
-        final uri = Uri.parse('$normalizedInstance/search').replace(
-          queryParameters: {'q': query, 'filter': filter},
-        );
+        final uri = Uri.parse(
+          '$normalizedInstance/search',
+        ).replace(queryParameters: {'q': query, 'filter': filter});
 
         try {
           final response = await http
@@ -333,10 +333,9 @@ class MusicService {
             final resolvedId = _extractVideoIdFromPipedItem(itemMap);
             if (resolvedId == null) continue;
 
-            final resolved = await _resolvePipedStreamByVideoId(
-              resolvedId,
-              [normalizedInstance],
-            );
+            final resolved = await _resolvePipedStreamByVideoId(resolvedId, [
+              normalizedInstance,
+            ]);
             if (resolved != null) {
               resolved['source'] = 'piped-search';
               resolved['search_query'] = query;
@@ -399,6 +398,22 @@ class MusicService {
         }
       } catch (e) {
         debugPrint('[MusicService] Backend stream fetch failed ($path): $e');
+      }
+    }
+
+    final resolvedByYoutube = await youtube_stream_resolver.resolveStream(
+      songId: songId,
+      titleHint: normalizedHint,
+      defaultHeaders: _defaultStreamHeaders,
+    );
+    if (resolvedByYoutube != null) {
+      final normalized = _normalizeStreamData(resolvedByYoutube);
+      if (normalized != null) {
+        final resolvedId = normalized['video_id']?.toString() ?? songId;
+        debugPrint(
+          '[MusicService] Using youtube_explode fallback for $resolvedId',
+        );
+        return normalized;
       }
     }
 

@@ -1,8 +1,9 @@
 import 'dart:math';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart'
-    show PlayerState;
+    show PlayerState, YoutubePlayer;
 import '../models/song.dart';
 import '../services/auth_service.dart';
 import '../services/music_service.dart';
@@ -98,15 +99,140 @@ class _MainScreenState extends State<MainScreen> {
     } catch (_) {}
   }
 
+  Map<String, String>? _buildStreamHeaders(dynamic rawHeaders) {
+    if (rawHeaders is! Map) return null;
+
+    final headers = rawHeaders.map(
+      (key, value) => MapEntry(key.toString(), value?.toString() ?? ''),
+    )..removeWhere((key, value) => key.trim().isEmpty || value.trim().isEmpty);
+
+    return headers.isEmpty ? null : headers;
+  }
+
+  Future<void> _loadSongForCurrentPlatform(Song song) async {
+    if (kIsWeb) {
+      await _player.loadSong(song);
+      return;
+    }
+
+    final streamData = await _musicService.getStreamDataWithHint(
+      song.id,
+      song.title,
+    );
+    final streamUrl = streamData?['audio_url']?.toString();
+    final streamHeaders = _buildStreamHeaders(streamData?['headers']);
+
+    await _player.loadSong(
+      song,
+      streamUrl: streamUrl,
+      streamHeaders: streamHeaders,
+    );
+  }
+
+  bool _isValidYoutubeVideoId(String value) {
+    return RegExp(r'^[A-Za-z0-9_-]{11}$').hasMatch(value);
+  }
+
+  String? _extractYoutubeVideoId(String raw) {
+    final input = raw.trim();
+    if (input.isEmpty) return null;
+    if (_isValidYoutubeVideoId(input)) return input;
+
+    final uri = Uri.tryParse(input);
+    if (uri != null) {
+      final fromQuery = uri.queryParameters['v'];
+      if (fromQuery != null && _isValidYoutubeVideoId(fromQuery)) {
+        return fromQuery;
+      }
+
+      if (uri.pathSegments.isNotEmpty) {
+        final last = uri.pathSegments.last;
+        if (_isValidYoutubeVideoId(last)) {
+          return last;
+        }
+      }
+    }
+
+    final match = RegExp(r'([A-Za-z0-9_-]{11})').firstMatch(input);
+    return match?.group(1);
+  }
+
+  Song _songWithVideoId(Song base, String videoId, [Song? fallback]) {
+    return Song(
+      id: videoId,
+      title: base.title,
+      artist: base.artist ?? fallback?.artist,
+      artists: base.artists ?? fallback?.artists,
+      albumName: base.albumName ?? fallback?.albumName,
+      coverUrl: base.coverUrl ?? fallback?.coverUrl,
+      duration: base.duration ?? fallback?.duration,
+      streamUrl: null,
+      albumId: base.albumId ?? fallback?.albumId,
+    );
+  }
+
+  Future<Song?> _tryAlternateYoutubePlayback(Song original) async {
+    final query = '${original.title} ${original.artist ?? ''}'.trim();
+    if (query.isEmpty) return null;
+
+    final candidates = await _musicService.searchSongs(query);
+    if (candidates.isEmpty) return null;
+
+    final tried = <String>{};
+    final originalId = _extractYoutubeVideoId(original.id);
+    if (originalId != null) {
+      tried.add(originalId);
+    }
+
+    for (final candidate in candidates.take(8)) {
+      final candidateId = _extractYoutubeVideoId(candidate.id);
+      if (candidateId == null || tried.contains(candidateId)) {
+        continue;
+      }
+      tried.add(candidateId);
+
+      final fallbackSong = _songWithVideoId(original, candidateId, candidate);
+      try {
+        await _loadSongForCurrentPlatform(fallbackSong);
+        debugPrint(
+          '[MainScreen] Alternate playback succeeded with id: $candidateId',
+        );
+        return fallbackSong;
+      } catch (e) {
+        debugPrint(
+          '[MainScreen] Alternate playback failed for $candidateId: $e',
+        );
+      }
+    }
+
+    return null;
+  }
+
   Future<void> _loadAndPlay(Song song) async {
     // song.id is the YouTube videoId from search results
     debugPrint('[MainScreen] playing song: ${song.title} (${song.id})');
 
-    // Playback is handled by youtube_player_iframe in PlayerService.
+    // Web uses iframe playback while Android/iOS prefer native streaming.
     try {
-      await _player.loadSong(song);
+      await _loadSongForCurrentPlatform(song);
     } catch (e) {
-      debugPrint('[MainScreen] _loadAndPlay error: $e');
+      debugPrint('[MainScreen] Primary playback failed: $e');
+
+      final alternateSong = await _tryAlternateYoutubePlayback(song);
+      if (alternateSong != null) {
+        if (mounted) {
+          setState(() {
+            _currentSong = alternateSong;
+            if (_queueIndex >= 0 && _queueIndex < _playQueue.length) {
+              if (_playQueue[_queueIndex].id == song.id) {
+                _playQueue[_queueIndex] = alternateSong;
+              }
+            }
+          });
+        }
+        return;
+      }
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -338,6 +464,8 @@ class _MainScreenState extends State<MainScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final ytController = _player.controller;
+
     final Widget libraryContent;
     if (_libraryView == LibraryView.playlist && _activePlaylistId != null) {
       libraryContent = PlaylistDetailScreen(
@@ -392,6 +520,20 @@ class _MainScreenState extends State<MainScreen> {
 
     return Stack(
       children: [
+        if (kIsWeb && ytController != null)
+          IgnorePointer(
+            child: Opacity(
+              opacity: 0.01,
+              child: Align(
+                alignment: Alignment.topLeft,
+                child: SizedBox(
+                  width: 180,
+                  height: 120,
+                  child: YoutubePlayer(controller: ytController),
+                ),
+              ),
+            ),
+          ),
         Scaffold(
           appBar: _selectedIndex == 0
               ? AppBar(

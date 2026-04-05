@@ -8,6 +8,7 @@ import 'screens/main_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   if (!kIsWeb &&
       (defaultTargetPlatform == TargetPlatform.android ||
           defaultTargetPlatform == TargetPlatform.iOS)) {
@@ -21,6 +22,7 @@ Future<void> main() async {
     await session.configure(const AudioSessionConfiguration.music());
     await session.setActive(true);
   }
+
   runApp(const MyApp());
 }
 

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import '../models/song.dart';
 import '../services/music_service.dart';
-import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import '../services/player_service.dart';
 
 class MiniPlayer extends StatefulWidget {
@@ -22,13 +21,11 @@ class _MiniPlayerState extends State<MiniPlayer>
   double _progress = 0.0;
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
-  YoutubePlayerController? _ytController;
 
   @override
   void initState() {
     super.initState();
     _checkLiked();
-    _ytController = _player.controller;
     _isPlaying = _player.isPlaying;
     _progress = _player.progress;
     _player.playingNotifier.addListener(_onPlayerStateChanged);
@@ -55,7 +52,6 @@ class _MiniPlayerState extends State<MiniPlayer>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentSong?.id != widget.currentSong?.id) {
       _checkLiked();
-      _ytController = _player.controller;
       _isPlaying = _player.isPlaying;
       _progress = _player.progress;
     }
@@ -288,29 +284,9 @@ class _MiniPlayerState extends State<MiniPlayer>
               ),
             ),
             const SizedBox(height: 6),
-            // Hidden YouTube player
-            if (_ytController != null)
-              SizedBox(
-                width: 1,
-                height: 1,
-                child: OverflowBox(
-                  minWidth: 160,
-                  maxWidth: 160,
-                  minHeight: 90,
-                  maxHeight: 90,
-                  alignment: Alignment.bottomRight,
-                  child: IgnorePointer(
-                    child: Opacity(
-                      opacity: 0.01,
-                      child: YoutubePlayer(controller: _ytController!),
-                    ),
-                  ),
-                ),
-              ),
           ],
         ),
       ),
     );
   }
 }
-

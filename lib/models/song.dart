@@ -23,8 +23,7 @@ class Song {
 
   factory Song.fromJson(Map<String, dynamic> json) {
     return Song(
-      id: (json['id'] ?? json['song_id'] ?? json['videoId'] ?? json['_id'] ?? '')
-          .toString(),
+      id: _pickSongId(json),
       title: (json['name'] ?? json['title'] ?? 'Unknown').toString(),
       artist: _parsePrimaryArtist(json['artists'] ?? json['artist']),
       artists: _parseAllArtists(json['artists'] ?? json['artist']),
@@ -40,6 +39,62 @@ class Song {
           ?.toString(),
       albumId: _parseAlbumId(json['album']),
     );
+  }
+
+  static String _pickSongId(Map<String, dynamic> json) {
+    final rawCandidates = <dynamic>[
+      json['song_id'],
+      json['videoId'],
+      json['id'],
+      json['_id'],
+    ];
+
+    for (final candidate in rawCandidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isEmpty) continue;
+
+      final extracted = _extractYoutubeVideoId(value);
+      if (extracted != null) {
+        return extracted;
+      }
+    }
+
+    for (final candidate in rawCandidates) {
+      final value = candidate?.toString().trim() ?? '';
+      if (value.isNotEmpty) {
+        return value;
+      }
+    }
+
+    return '';
+  }
+
+  static String? _extractYoutubeVideoId(String raw) {
+    final input = raw.trim();
+    if (input.isEmpty) return null;
+
+    final idRegex = RegExp(r'^[A-Za-z0-9_-]{11}$');
+    if (idRegex.hasMatch(input)) {
+      return input;
+    }
+
+    final uri = Uri.tryParse(input);
+    if (uri != null) {
+      final v = uri.queryParameters['v'];
+      if (v != null && idRegex.hasMatch(v)) {
+        return v;
+      }
+
+      if (uri.pathSegments.isNotEmpty) {
+        final last = uri.pathSegments.last;
+        if (idRegex.hasMatch(last)) {
+          return last;
+        }
+      }
+    }
+
+    final loose = RegExp(r'([A-Za-z0-9_-]{11})').firstMatch(input);
+    return loose?.group(1);
   }
 
   static String? _parsePrimaryArtist(dynamic artists) {

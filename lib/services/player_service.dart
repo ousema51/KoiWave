@@ -35,6 +35,7 @@ class PlayerService {
   bool _isPlaying = false;
   bool _isReady = false;
   bool _usingAudioEngine = false;
+  yt.YoutubeError? _lastYoutubeError;
 
   // Listeners for UI updates
   final ValueNotifier<bool> _playingNotifier = ValueNotifier(false);
@@ -108,7 +109,10 @@ class PlayerService {
       }
 
       if (state.hasError) {
+        _lastYoutubeError = state.error;
         debugPrint('[PlayerService] Error: ${state.error}');
+      } else if (state.playerState == yt.PlayerState.playing) {
+        _lastYoutubeError = null;
       }
     });
 
@@ -174,26 +178,150 @@ class PlayerService {
     }
   }
 
+  String? _extractYoutubeVideoId(String raw) {
+    final input = raw.trim();
+    if (input.isEmpty) return null;
+
+    final idRegex = RegExp(r'^[A-Za-z0-9_-]{11}$');
+    if (idRegex.hasMatch(input)) {
+      return input;
+    }
+
+    final uri = Uri.tryParse(input);
+    if (uri != null) {
+      final fromQuery = uri.queryParameters['v'];
+      if (fromQuery != null && idRegex.hasMatch(fromQuery)) {
+        return fromQuery;
+      }
+
+      if (uri.pathSegments.isNotEmpty) {
+        final last = uri.pathSegments.last;
+        if (idRegex.hasMatch(last)) {
+          return last;
+        }
+      }
+    }
+
+    final loose = RegExp(r'([A-Za-z0-9_-]{11})').firstMatch(input);
+    return loose?.group(1);
+  }
+
+  bool _isFatalYoutubeError(yt.YoutubeError? error) {
+    if (error == null || error == yt.YoutubeError.none) {
+      return false;
+    }
+
+    switch (error) {
+      case yt.YoutubeError.invalidParam:
+      case yt.YoutubeError.videoNotFound:
+      case yt.YoutubeError.notEmbeddable:
+      case yt.YoutubeError.cannotFindVideo:
+      case yt.YoutubeError.sameAsNotEmbeddable:
+        return true;
+      case yt.YoutubeError.html5Error:
+      case yt.YoutubeError.unknown:
+      case yt.YoutubeError.none:
+        return false;
+    }
+  }
+
+  Future<bool> _waitForYoutubePlaybackStart({
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    final stopwatch = Stopwatch()..start();
+
+    while (stopwatch.elapsed < timeout) {
+      final state = _playerStateNotifier.value;
+      if (state == yt.PlayerState.playing) {
+        return true;
+      }
+
+      // Buffering with known position indicates the stream has started.
+      if (state == yt.PlayerState.buffering &&
+          _positionNotifier.value > Duration.zero) {
+        return true;
+      }
+
+      if (_isFatalYoutubeError(_lastYoutubeError)) {
+        return false;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+
+    return _playerStateNotifier.value == yt.PlayerState.playing;
+  }
+
+  Future<void> _playYoutubeWithRetries(
+    yt.YoutubePlayerController controller, {
+    required String videoId,
+  }) async {
+    final bool isAndroid =
+        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
+    final int maxAttempts = isAndroid ? 5 : 3;
+
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      _lastYoutubeError = null;
+
+      if (attempt == 1) {
+        await controller.cueVideoById(videoId: videoId);
+      } else if (attempt == 3) {
+        await controller.loadVideoByUrl(
+          mediaContentUrl: 'https://www.youtube.com/watch?v=$videoId',
+        );
+      } else {
+        await controller.loadVideoById(videoId: videoId);
+      }
+
+      if (isAndroid) {
+        await Future<void>.delayed(const Duration(milliseconds: 350));
+      }
+
+      final bool mutedAttempt = isAndroid && attempt >= 4;
+      if (mutedAttempt) {
+        await controller.mute();
+      }
+
+      await controller.playVideo();
+
+      final started = await _waitForYoutubePlaybackStart(
+        timeout: Duration(
+          milliseconds: isAndroid ? 3000 + (attempt * 1200) : 1600,
+        ),
+      );
+      if (started) {
+        if (mutedAttempt) {
+          unawaited(controller.unMute());
+        }
+        return;
+      }
+
+      if (_isFatalYoutubeError(_lastYoutubeError)) {
+        break;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 450));
+    }
+
+    final state = _playerStateNotifier.value;
+    final errorText = _lastYoutubeError?.toString() ?? 'none';
+    throw StateError(
+      'YouTube playback did not start for $videoId (state: $state, error: $errorText)',
+    );
+  }
+
   Future<void> _loadSongWithYoutubeIFrame(Song song) async {
     _usingAudioEngine = false;
     _ensureController();
 
-    final controller = _controller!;
-    await controller.loadVideoById(videoId: song.id);
-
-    // On Android, the WebView-backed player can ignore the first play call
-    // right after load, so we retry once after a short delay.
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      await Future<void>.delayed(const Duration(milliseconds: 250));
-      await controller.playVideo();
-      await Future<void>.delayed(const Duration(milliseconds: 450));
-
-      if (_playerStateNotifier.value != yt.PlayerState.playing) {
-        await controller.playVideo();
-      }
-    } else {
-      await controller.playVideo();
+    final resolvedVideoId = _extractYoutubeVideoId(song.id);
+    if (resolvedVideoId == null) {
+      throw FormatException('Invalid YouTube video id: ${song.id}');
     }
+
+    _lastYoutubeError = null;
+    final controller = _controller!;
+    await _playYoutubeWithRetries(controller, videoId: resolvedVideoId);
 
     if (!_isReady) {
       _isReady = true;
@@ -201,7 +329,7 @@ class PlayerService {
     }
 
     debugPrint(
-      '[PlayerService] Loading YouTube iframe playback: ${song.title} (ID: ${song.id})',
+      '[PlayerService] Loading YouTube iframe playback: ${song.title} (ID: $resolvedVideoId)',
     );
   }
 
@@ -225,15 +353,12 @@ class PlayerService {
 
     await _stopCurrentEngine();
 
-    final bool forceYoutubeEngine =
-        !kIsWeb && defaultTargetPlatform == TargetPlatform.android;
-    if (forceYoutubeEngine) {
+    if (kIsWeb) {
       try {
         await _loadSongWithYoutubeIFrame(song);
         return;
       } catch (e) {
-        debugPrint('[PlayerService] Android YouTube load failed: $e');
-        rethrow;
+        debugPrint('[PlayerService] Web YouTube load failed: $e');
       }
     }
 
