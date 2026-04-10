@@ -87,6 +87,8 @@ _DEFAULT_PIPED_INSTANCES = (
     "https://api.piped.yt",
 )
 
+_EMBEDDED_RAPIDAPI_KEY = "2d8cf9ee07msh109bfb3f630c5d7p14ffdcjsnb682cf33f6cb"
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -482,19 +484,67 @@ def _load_piped_instances():
 
 
 def _get_rapidapi_key():
-    return (
+    disable_embedded = (os.environ.get("YTDLP_DISABLE_EMBEDDED_RAPIDAPI_KEY") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+    env_key = (
         (os.environ.get("YTDLP_RAPIDAPI_KEY") or "").strip()
         or (os.environ.get("RAPIDAPI_KEY") or "").strip()
         or (os.environ.get("X_RAPIDAPI_KEY") or "").strip()
     )
 
+    if env_key:
+        return env_key
+
+    if disable_embedded:
+        return ""
+
+    return (
+        _EMBEDDED_RAPIDAPI_KEY
+    )
+
 
 def _get_rapidapi_host():
-    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "yt-dlp-api.p.rapidapi.com").strip()
+    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "youtube-to-mp315.p.rapidapi.com").strip()
 
 
 def _get_rapidapi_url():
-    return (os.environ.get("YTDLP_RAPIDAPI_URL") or "https://yt-dlp-api.p.rapidapi.com/").strip()
+    return (
+        os.environ.get("YTDLP_RAPIDAPI_URL")
+        or "https://youtube-to-mp315.p.rapidapi.com/download"
+    ).strip()
+
+
+def _get_rapidapi_url_candidates():
+    configured = _get_rapidapi_url()
+    candidates = []
+
+    def add(url):
+        value = (url or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    add(configured)
+
+    try_alt_paths = (os.environ.get("YTDLP_RAPIDAPI_TRY_ALT_PATHS") or "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+
+    if try_alt_paths:
+        base = configured.rstrip("/")
+        if base:
+            add(base)
+            add(base + "/")
+            add(base + "/get-url-data")
+
+    return candidates
 
 
 def _external_ytdlp_api_enabled():
@@ -561,6 +611,11 @@ def _extract_audio_url_from_external_payload(payload):
             "audio_url",
             "audio",
             "url",
+            "mp3",
+            "mp3_url",
+            "file",
+            "file_url",
+            "result_url",
             "download_url",
             "downloadUrl",
             "stream_url",
@@ -570,6 +625,10 @@ def _extract_audio_url_from_external_payload(payload):
             if value:
                 return value
 
+    direct_result = payload.get("result")
+    if isinstance(direct_result, str) and direct_result.strip():
+        return direct_result.strip()
+
     for candidate in candidate_maps:
         for key in ("requested_downloads", "requested_formats", "formats", "audios", "entries"):
             value = candidate.get(key)
@@ -578,6 +637,187 @@ def _extract_audio_url_from_external_payload(payload):
                 return picked
 
     return None
+
+
+def _extract_external_request_id(payload):
+    if not isinstance(payload, dict):
+        return None
+
+    candidate_maps = [payload]
+    for key in ("data", "result"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            candidate_maps.append(value)
+
+    for candidate in candidate_maps:
+        for key in ("id", "request_id", "requestId", "job_id", "jobId", "task_id", "taskId"):
+            value = _safe_str(candidate.get(key))
+            if value:
+                return value
+
+    return None
+
+
+def _extract_external_status(payload):
+    if not isinstance(payload, dict):
+        return ""
+
+    candidate_maps = [payload]
+    for key in ("data", "result"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            candidate_maps.append(value)
+
+    for candidate in candidate_maps:
+        for key in ("status", "state", "job_status", "jobStatus", "phase"):
+            value = _safe_str(candidate.get(key))
+            if value:
+                return value.strip().upper()
+
+    return ""
+
+
+def _is_external_status_error(status):
+    normalized = (status or "").strip().upper()
+    if not normalized:
+        return False
+
+    markers = ("ERROR", "FAILED", "FAILURE", "CANCEL", "ABORT", "DENIED")
+    return any(marker in normalized for marker in markers)
+
+
+def _is_external_status_ready(status):
+    normalized = (status or "").strip().upper()
+    if not normalized:
+        return False
+
+    if normalized in ("DONE", "READY", "SUCCESS", "COMPLETED", "COMPLETE", "CONVERTED", "FINISHED"):
+        return True
+
+    markers = ("COMPLETE", "DONE", "SUCCESS", "READY", "FINISH")
+    return any(marker in normalized for marker in markers)
+
+
+def _is_external_status_processing(status):
+    normalized = (status or "").strip().upper()
+    if not normalized:
+        return False
+
+    markers = ("PENDING", "PROCESS", "CONVERTING", "QUEUE", "START", "RUNNING", "WAIT", "RETRY")
+    return any(marker in normalized for marker in markers)
+
+
+def _get_rapidapi_status_url_candidates(download_endpoint):
+    candidates = []
+
+    def add(value):
+        entry = (value or "").strip()
+        if entry and entry not in candidates:
+            candidates.append(entry)
+
+    add(os.environ.get("YTDLP_RAPIDAPI_STATUS_URL"))
+
+    primary = _get_rapidapi_url()
+    if "{id}" in primary or "{request_id}" in primary or "/status" in primary.lower():
+        add(primary)
+
+    endpoint_value = (download_endpoint or "").strip().split("?", 1)[0]
+    lowered = endpoint_value.lower()
+    if "/download" in lowered:
+        prefix = endpoint_value.rsplit("/download", 1)[0]
+        add(prefix + "/status/{id}")
+
+    host = _get_rapidapi_host()
+    if host:
+        add("https://{}/status/{{id}}".format(host))
+
+    return candidates
+
+
+def _poll_rapidapi_status(request_id, endpoint_candidates, headers, timeout_seconds):
+    if not request_id:
+        return {
+            "success": False,
+            "error_code": "external_request_missing_id",
+            "message": "RapidAPI status polling requested without request id",
+        }
+
+    attempts = max(1, _get_int_env("YTDLP_RAPIDAPI_STATUS_POLL_ATTEMPTS", 4))
+    delay_ms = max(250, _get_int_env("YTDLP_RAPIDAPI_STATUS_POLL_DELAY_MS", 1200))
+
+    last_payload = None
+    last_status = ""
+    last_endpoint = None
+
+    for attempt in range(attempts):
+        for endpoint in endpoint_candidates:
+            endpoint_value = (endpoint or "").strip()
+            if not endpoint_value:
+                continue
+
+            if "{id}" in endpoint_value:
+                endpoint_value = endpoint_value.replace("{id}", request_id)
+            if "{request_id}" in endpoint_value:
+                endpoint_value = endpoint_value.replace("{request_id}", request_id)
+
+            try:
+                response = requests.get(
+                    endpoint_value,
+                    headers=headers,
+                    timeout=(8, timeout_seconds),
+                )
+            except Exception:
+                continue
+
+            if response.status_code == 404:
+                continue
+
+            if response.status_code >= 400:
+                body = response.text[:220] if response.text else ""
+                return {
+                    "success": False,
+                    "error_code": "external_http_error",
+                    "message": "RapidAPI status returned status {} at {}: {}".format(
+                        response.status_code,
+                        endpoint_value,
+                        body,
+                    ),
+                }
+
+            try:
+                payload = response.json()
+            except Exception:
+                continue
+
+            if not isinstance(payload, dict):
+                continue
+
+            last_payload = payload
+            last_endpoint = endpoint_value
+            last_status = _extract_external_status(payload)
+
+            if _is_external_status_error(last_status) or _is_external_status_ready(last_status):
+                return {
+                    "success": True,
+                    "payload": payload,
+                    "endpoint": endpoint_value,
+                }
+
+        if attempt < attempts - 1 and _is_external_status_processing(last_status):
+            time.sleep(delay_ms / 1000.0)
+
+    if isinstance(last_payload, dict):
+        return {
+            "success": True,
+            "payload": last_payload,
+            "endpoint": last_endpoint,
+        }
+
+    return {
+        "success": False,
+        "error_code": "external_status_unavailable",
+        "message": "RapidAPI status endpoint did not return a valid payload",
+    }
 
 
 def _resolve_stream_from_external_api(video_id):
@@ -592,7 +832,7 @@ def _resolve_stream_from_external_api(video_id):
     if not resolved_id:
         return {"success": False, "message": "Invalid video_id"}
 
-    endpoint = _get_rapidapi_url()
+    endpoint_candidates = _get_rapidapi_url_candidates()
     host = _get_rapidapi_host()
     target_url = "https://www.youtube.com/watch?v={}".format(resolved_id)
 
@@ -605,38 +845,169 @@ def _resolve_stream_from_external_api(video_id):
 
     timeout_seconds = max(8, _get_int_env("YTDLP_EXTERNAL_TIMEOUT_SECONDS", 20))
 
-    try:
-        response = requests.get(
-            endpoint,
-            params={"url": target_url},
-            headers=headers,
-            timeout=(8, timeout_seconds),
-        )
-    except Exception as e:
+    last_error = None
+    payload = None
+    used_endpoint = None
+    used_method = None
+    for endpoint in endpoint_candidates:
+        endpoint_value = endpoint
+        params = None
+        body = None
+        method = "GET"
+
+        if "{id}" in endpoint_value:
+            endpoint_value = endpoint_value.replace("{id}", resolved_id)
+        elif "{video_id}" in endpoint_value:
+            endpoint_value = endpoint_value.replace("{video_id}", resolved_id)
+        elif "{url}" in endpoint_value:
+            endpoint_value = endpoint_value.replace("{url}", target_url)
+        else:
+            params = {"url": target_url}
+
+        if "/download" in endpoint_value.lower():
+            method = "POST"
+            params = dict(params or {"url": target_url})
+            body = {
+                "url": target_url,
+                "format": (os.environ.get("YTDLP_RAPIDAPI_FORMAT") or "mp3"),
+                "quality": _get_int_env("YTDLP_RAPIDAPI_QUALITY", 0),
+            }
+            callback_url = (os.environ.get("YTDLP_RAPIDAPI_CALLBACK_URL") or "").strip()
+            if callback_url:
+                body["callbackUrl"] = callback_url
+
+        try:
+            if method == "POST":
+                response = requests.post(
+                    endpoint_value,
+                    params=params,
+                    json=body,
+                    headers=headers,
+                    timeout=(8, timeout_seconds),
+                )
+            else:
+                response = requests.get(
+                    endpoint_value,
+                    params=params,
+                    headers=headers,
+                    timeout=(8, timeout_seconds),
+                )
+        except Exception as e:
+            last_error = {
+                "success": False,
+                "error_code": "external_request_failed",
+                "message": "RapidAPI yt-dlp {} request failed: {}".format(method, str(e)),
+            }
+            continue
+
+        if response.status_code == 404:
+            last_error = {
+                "success": False,
+                "error_code": "external_http_404",
+                "message": "RapidAPI yt-dlp endpoint {} returned 404".format(endpoint_value),
+            }
+            continue
+
+        if response.status_code >= 400:
+            body = response.text[:220] if response.text else ""
+            last_error = {
+                "success": False,
+                "error_code": "external_http_error",
+                "message": "RapidAPI yt-dlp {} returned status {} at {}: {}".format(
+                    method,
+                    response.status_code,
+                    endpoint_value,
+                    body,
+                ),
+            }
+            continue
+
+        try:
+            payload = response.json()
+            used_endpoint = endpoint_value
+            used_method = method
+            break
+        except Exception as e:
+            last_error = {
+                "success": False,
+                "error_code": "external_invalid_json",
+                "message": "RapidAPI yt-dlp returned invalid JSON from {}: {}".format(endpoint_value, str(e)),
+            }
+            continue
+
+    if payload is None:
+        if last_error:
+            return last_error
         return {
             "success": False,
             "error_code": "external_request_failed",
-            "message": "RapidAPI yt-dlp request failed: {}".format(str(e)),
+            "message": "RapidAPI yt-dlp request failed",
         }
 
-    if response.status_code >= 400:
-        body = response.text[:220] if response.text else ""
-        return {
-            "success": False,
-            "error_code": "external_http_error",
-            "message": "RapidAPI yt-dlp returned status {}: {}".format(response.status_code, body),
-        }
-
-    try:
-        payload = response.json()
-    except Exception as e:
+    if not isinstance(payload, dict):
         return {
             "success": False,
             "error_code": "external_invalid_json",
-            "message": "RapidAPI yt-dlp returned invalid JSON: {}".format(str(e)),
+            "message": "RapidAPI yt-dlp returned unexpected payload type",
         }
 
+    request_id = _extract_external_request_id(payload)
+    status = _extract_external_status(payload)
+
+    if request_id and _is_external_status_processing(status):
+        status_candidates = _get_rapidapi_status_url_candidates(used_endpoint)
+        polled = _poll_rapidapi_status(request_id, status_candidates, headers, timeout_seconds)
+        if polled.get("success"):
+            polled_payload = polled.get("payload")
+            if isinstance(polled_payload, dict):
+                payload = polled_payload
+                used_endpoint = polled.get("endpoint") or used_endpoint
+                status = _extract_external_status(payload)
+        else:
+            return {
+                "success": False,
+                "error_code": polled.get("error_code") or "external_status_unavailable",
+                "message": polled.get("message") or "RapidAPI status polling failed",
+            }
+
     audio_url = _extract_audio_url_from_external_payload(payload)
+
+    provider_code = None
+    provider_description = None
+    provider_code = _safe_str(payload.get("code") or payload.get("errorCode"))
+    provider_description = _safe_str(payload.get("description") or payload.get("message") or payload.get("detail"))
+
+    provider_not_found = provider_code == "E0004" or (
+        "request not found" in (provider_description or "").lower()
+    )
+    if not audio_url and provider_not_found:
+        return {
+            "success": False,
+            "error_code": "external_request_not_found",
+            "message": "RapidAPI request id not found at {}: {}".format(
+                used_endpoint,
+                provider_description or "unknown request id",
+            ),
+        }
+
+    if _is_external_status_error(status):
+        return {
+            "success": False,
+            "error_code": "external_conversion_error",
+            "message": "RapidAPI conversion failed with status {} at {}{}".format(
+                status,
+                used_endpoint,
+                ": {}".format(provider_description) if provider_description else "",
+            ),
+        }
+
+    if _is_external_status_processing(status) and not audio_url:
+        return {
+            "success": False,
+            "error_code": "external_pending",
+            "message": "RapidAPI conversion still processing for request {}".format(request_id or "unknown"),
+        }
+
     if not audio_url:
         return {
             "success": False,
@@ -657,6 +1028,10 @@ def _resolve_stream_from_external_api(video_id):
             "title": title,
             "duration": duration,
             "source": "rapidapi-yt-dlp",
+            "external_endpoint": used_endpoint,
+            "external_method": used_method,
+            "external_request_id": request_id,
+            "external_status": status,
         },
     }
 
@@ -1041,7 +1416,17 @@ def get_stream_url(video_id=""):
             external_result["data"] = data
             return external_result
 
-        if _allow_local_ytdlp_fallback():
+        should_try_local = _allow_local_ytdlp_fallback()
+        if external_result.get("error_code") in (
+            "external_request_not_found",
+            "external_conversion_error",
+            "external_pending",
+            "external_status_unavailable",
+        ):
+            # For request-id based providers, conversion errors, or pending jobs, try local extraction.
+            should_try_local = True
+
+        if should_try_local:
             target = "https://www.youtube.com/watch?v={}".format(resolved_id)
             local_result = _resolve_stream_from_yt_dlp(target, from_search=False)
     else:
