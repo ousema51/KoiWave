@@ -74,6 +74,8 @@ Cookie loading priority used by this backend:
 
 The backend also auto-converts raw `Cookie:` header strings into Netscape cookie format, so `backend/cookies/cookie.txt` can contain either Netscape cookies or a single cookie header line.
 
+If yt-dlp still fails (for example YouTube bot challenge), backend automatically falls back to Piped stream resolution. You can override instances via `PIPED_INSTANCES` (comma-separated URLs).
+
 ### 3. Run locally
 
 ```bash

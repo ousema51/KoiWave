@@ -10,6 +10,9 @@ import os
 import tempfile
 import threading
 import time
+from urllib.parse import urljoin
+
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,12 @@ _STREAM_CACHE_TTL_SECONDS = max(30, _get_int_env("YTDLP_STREAM_CACHE_TTL_SECONDS
 _STREAM_CACHE_STALE_SECONDS = max(
     _STREAM_CACHE_TTL_SECONDS,
     _get_int_env("YTDLP_STREAM_CACHE_STALE_SECONDS", 1800),
+)
+
+_DEFAULT_PIPED_INSTANCES = (
+    "https://pipedapi.adminforge.de",
+    "https://pipedapi.kavin.rocks",
+    "https://api.piped.yt",
 )
 
 
@@ -462,6 +471,101 @@ def _stream_cache_set(video_id, payload):
         _STREAM_CACHE[video_id] = entry
 
 
+def _load_piped_instances():
+    configured = (os.environ.get("PIPED_INSTANCES") or "").strip()
+    if configured:
+        values = [v.strip().rstrip("/") for v in configured.split(",") if v.strip()]
+        if values:
+            return values
+
+    return [v.rstrip("/") for v in _DEFAULT_PIPED_INSTANCES]
+
+
+def _pick_best_piped_audio_stream(streams):
+    if not isinstance(streams, list):
+        return None
+
+    best = None
+    best_score = -1
+
+    for stream in streams:
+        if not isinstance(stream, dict):
+            continue
+
+        raw_url = _safe_str(stream.get("url") or stream.get("audioProxyUrl"))
+        if not raw_url:
+            continue
+
+        bitrate = _safe_int(stream.get("bitrate")) or 0
+        codec = (_safe_str(stream.get("codec")) or "").lower()
+
+        score = bitrate
+        if "opus" in codec or "aac" in codec or "mp4a" in codec:
+            score += 10
+
+        if score > best_score:
+            best_score = score
+            best = dict(stream)
+
+    return best
+
+
+def _resolve_stream_from_piped(video_id):
+    resolved_id = _extract_video_id(video_id)
+    if not resolved_id:
+        return {"success": False, "message": "Invalid video_id for Piped fallback"}
+
+    instances = _load_piped_instances()
+    for instance in instances:
+        endpoint = "{}/streams/{}".format(instance, resolved_id)
+        try:
+            response = requests.get(
+                endpoint,
+                headers={"Accept": "application/json"},
+                timeout=(8, 15),
+            )
+        except Exception as e:
+            logger.warning("Piped request failed for %s: %s", endpoint, e)
+            continue
+
+        if response.status_code != 200:
+            continue
+
+        try:
+            payload = response.json()
+        except Exception:
+            continue
+
+        if not isinstance(payload, dict):
+            continue
+
+        streams = payload.get("audioStreams") or payload.get("audio_streams") or []
+        best_stream = _pick_best_piped_audio_stream(streams)
+        if not best_stream:
+            continue
+
+        stream_url = _safe_str(best_stream.get("url") or best_stream.get("audioProxyUrl"))
+        if not stream_url:
+            continue
+
+        if stream_url.startswith("/"):
+            stream_url = urljoin(instance + "/", stream_url.lstrip("/"))
+
+        stream_payload = {
+            "audio_url": stream_url,
+            "headers": _merged_stream_headers(),
+            "video_id": resolved_id,
+            "title": _safe_str(payload.get("title")),
+            "duration": _safe_int(payload.get("duration")),
+            "source": "piped",
+            "piped_instance": instance,
+        }
+
+        return {"success": True, "data": stream_payload}
+
+    return {"success": False, "message": "Piped fallback failed to resolve stream"}
+
+
 def _get_thumbnail(r):
     """Extract thumbnail URL with fallback handling."""
     if r is None:
@@ -754,6 +858,7 @@ def get_stream_url(video_id=""):
         result["data"] = data
         return result
 
+    stale = None
     if result.get("error_code") == "bot_challenge":
         stale = _stream_cache_get(resolved_id, allow_stale=True)
         if stale:
@@ -763,7 +868,32 @@ def get_stream_url(video_id=""):
                 "message": "Using stale cached stream URL due to temporary YouTube challenge",
             }
 
-    return result
+    piped_result = _resolve_stream_from_piped(resolved_id)
+    if piped_result.get("success"):
+        data = piped_result.get("data") or {}
+        if not data.get("video_id"):
+            data["video_id"] = resolved_id
+        _stream_cache_set(resolved_id, data)
+        piped_result["data"] = data
+        return piped_result
+
+    if result.get("error_code") == "bot_challenge":
+        return {
+            "success": False,
+            "error_code": "bot_challenge",
+            "message": "{} Piped fallback error: {}".format(
+                result.get("message", "YouTube bot challenge detected"),
+                piped_result.get("message", "unknown"),
+            ),
+        }
+
+    return {
+        "success": False,
+        "message": "{} Piped fallback error: {}".format(
+            result.get("message", "yt-dlp stream extraction failed"),
+            piped_result.get("message", "unknown"),
+        ),
+    }
 
 
 def get_stream_from_search(query=""):
@@ -987,6 +1117,7 @@ def health_check():
     cookie_blob = (cookie_source.get("blob") or "").strip()
     materialized_cookie_file = _materialize_cookiefile_from_env() if cookie_blob else None
     local_cookie_source = _discover_local_cookie_source()
+    piped_instances = _load_piped_instances()
 
     status = {
         "ytmusic": ytmusic is not None,
@@ -1008,6 +1139,9 @@ def health_check():
         "visitor_data_configured": bool((os.environ.get("YTDLP_VISITOR_DATA") or "").strip()),
         "stream_cache_size": len(_STREAM_CACHE),
         "stream_cache_ttl_seconds": _STREAM_CACHE_TTL_SECONDS,
+        "piped_fallback_enabled": True,
+        "piped_instances_count": len(piped_instances),
+        "piped_instances": piped_instances,
     }
     if ytmusic:
         try:
