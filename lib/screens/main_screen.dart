@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../models/song.dart';
 import '../services/auth_service.dart';
 import '../services/music_service.dart';
+import '../services/offline_audio_cache_service.dart';
 import '../services/player_service.dart';
 import 'home_screen.dart';
 import 'search_screen.dart';
@@ -34,6 +35,7 @@ class _MainScreenState extends State<MainScreen> {
   final AuthService _authService = AuthService();
   final MusicService _musicService = MusicService();
   final PlayerService _player = PlayerService();
+  final OfflineAudioCacheService _audioCache = OfflineAudioCacheService();
   int _playRequestNonce = 0;
   final List<Song> _playQueue = [];
   final List<Song> _playbackHistory = [];
@@ -42,7 +44,6 @@ class _MainScreenState extends State<MainScreen> {
   bool _isShuffleEnabled = false;
   QueueRepeatMode _repeatMode = QueueRepeatMode.off;
   final Set<String> _favoriteSongIds = <String>{};
-  bool _isFavoriteStateLoading = false;
   bool _favoriteActionInFlight = false;
   bool _isCurrentSongFavorite = false;
   int _favoriteStatusRequestNonce = 0;
@@ -68,14 +69,12 @@ class _MainScreenState extends State<MainScreen> {
 
     if (song == null) {
       _isCurrentSongFavorite = false;
-      _isFavoriteStateLoading = false;
       return;
     }
 
     final songId = song.id.trim();
     _isCurrentSongFavorite =
         songId.isNotEmpty && _favoriteSongIds.contains(songId);
-    _isFavoriteStateLoading = songId.isNotEmpty;
     unawaited(_loadFavoriteStateForSong(song));
   }
 
@@ -174,11 +173,6 @@ class _MainScreenState extends State<MainScreen> {
   Future<void> _loadFavoriteStateForSong(Song song) async {
     final songId = song.id.trim();
     if (songId.isEmpty) {
-      if (mounted) {
-        setState(() {
-          _isFavoriteStateLoading = false;
-        });
-      }
       return;
     }
 
@@ -195,7 +189,6 @@ class _MainScreenState extends State<MainScreen> {
       }
 
       setState(() {
-        _isFavoriteStateLoading = false;
         _isCurrentSongFavorite = liked;
         if (liked) {
           _favoriteSongIds.add(songId);
@@ -212,14 +205,10 @@ class _MainScreenState extends State<MainScreen> {
       if (current == null || !_sameSong(current, song)) {
         return;
       }
-
-      setState(() {
-        _isFavoriteStateLoading = false;
-      });
     }
   }
 
-  Future<void> _addCurrentSongToFavorites() async {
+  Future<void> _toggleCurrentSongFavorite() async {
     final song = _currentSong;
     if (song == null || _favoriteActionInFlight) {
       return;
@@ -231,40 +220,52 @@ class _MainScreenState extends State<MainScreen> {
       return;
     }
 
-    if (_isCurrentSongFavorite) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Song already in favorites')),
-      );
-      return;
-    }
+    final nextIsFavorite = !_isCurrentSongFavorite;
 
     setState(() {
       _favoriteActionInFlight = true;
+      _isCurrentSongFavorite = nextIsFavorite;
+      if (nextIsFavorite) {
+        _favoriteSongIds.add(songId);
+      } else {
+        _favoriteSongIds.remove(songId);
+      }
     });
 
     try {
-      final response = await _musicService.likeSong(songId, song.toMetadata());
+      final response = nextIsFavorite
+          ? await _musicService.likeSong(songId, song.toMetadata())
+          : await _musicService.unlikeSong(songId);
       if (!mounted) {
         return;
       }
 
-      if (response['success'] == true) {
+      if (response['success'] != true) {
         setState(() {
-          _isCurrentSongFavorite = true;
-          _favoriteSongIds.add(songId);
-          _isFavoriteStateLoading = false;
+          _isCurrentSongFavorite = !nextIsFavorite;
+          if (_isCurrentSongFavorite) {
+            _favoriteSongIds.add(songId);
+          } else {
+            _favoriteSongIds.remove(songId);
+          }
         });
 
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Added to favorites')));
-      } else {
         final message =
-            response['message']?.toString() ?? 'Failed to add to favorites';
+            response['message']?.toString() ?? 'Failed to update favorites';
         _showPlaybackError(message);
       }
     } catch (e) {
-      _showPlaybackError('Failed to add to favorites: $e');
+      if (mounted) {
+        setState(() {
+          _isCurrentSongFavorite = !nextIsFavorite;
+          if (_isCurrentSongFavorite) {
+            _favoriteSongIds.add(songId);
+          } else {
+            _favoriteSongIds.remove(songId);
+          }
+        });
+      }
+      _showPlaybackError('Failed to update favorites: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -349,6 +350,16 @@ class _MainScreenState extends State<MainScreen> {
     final requestId = ++_playRequestNonce;
 
     try {
+      final cachedPath = await _audioCache.getCachedFilePathForSong(song);
+      if (!mounted || requestId != _playRequestNonce) {
+        return;
+      }
+
+      if (cachedPath != null && cachedPath.isNotEmpty) {
+        await _player.playLocalFile(song: song, filePath: cachedPath);
+        return;
+      }
+
       final streamResult = await _musicService.getStreamDataWithHint(
         song.id,
         queryHint: _buildPlaybackQueryHint(song),
@@ -390,6 +401,16 @@ class _MainScreenState extends State<MainScreen> {
         audioUrl: audioUrl,
         headers: headers,
       );
+
+      unawaited(() async {
+        try {
+          await _audioCache.cacheSongFromResolvedData(
+            song: song,
+            audioUrl: audioUrl,
+            headers: headers,
+          );
+        } catch (_) {}
+      }());
     } catch (e) {
       if (!mounted || requestId != _playRequestNonce) {
         return;
@@ -902,50 +923,23 @@ class _MainScreenState extends State<MainScreen> {
                                   ),
                                 ),
                                 const SizedBox(width: 10),
-                                AnimatedContainer(
-                                  duration: const Duration(milliseconds: 180),
-                                  width: 48,
-                                  height: 48,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
+                                IconButton(
+                                  tooltip: _isCurrentSongFavorite
+                                      ? 'Remove from favorites'
+                                      : 'Add to favorites',
+                                  onPressed: _favoriteActionInFlight
+                                      ? null
+                                      : () => unawaited(
+                                          _toggleCurrentSongFavorite(),
+                                        ),
+                                  icon: Icon(
+                                    _isCurrentSongFavorite
+                                        ? Icons.favorite_rounded
+                                        : Icons.favorite_border_rounded,
                                     color: _isCurrentSongFavorite
-                                        ? const Color(0xFF356DCE)
-                                        : Colors.white.withValues(alpha: 0.09),
-                                    border: Border.all(
-                                      color: _isCurrentSongFavorite
-                                          ? const Color(0xFF9EC2FF)
-                                          : Colors.white.withValues(
-                                              alpha: 0.22,
-                                            ),
-                                    ),
-                                  ),
-                                  child: IconButton(
-                                    tooltip: _isCurrentSongFavorite
-                                        ? 'Already in favorites'
-                                        : 'Add to favorites',
-                                    onPressed: _favoriteActionInFlight
-                                        ? null
-                                        : () => unawaited(
-                                            _addCurrentSongToFavorites(),
-                                          ),
-                                    icon:
-                                        _favoriteActionInFlight ||
-                                            _isFavoriteStateLoading
-                                        ? const SizedBox(
-                                            width: 20,
-                                            height: 20,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              color: Colors.white,
-                                            ),
-                                          )
-                                        : Icon(
-                                            _isCurrentSongFavorite
-                                                ? Icons.favorite_rounded
-                                                : Icons.favorite_border_rounded,
-                                            color: Colors.white,
-                                            size: 27,
-                                          ),
+                                        ? const Color(0xFF9EC2FF)
+                                        : Colors.white,
+                                    size: 28,
                                   ),
                                 ),
                               ],
@@ -965,37 +959,17 @@ class _MainScreenState extends State<MainScreen> {
                                   mainAxisAlignment:
                                       MainAxisAlignment.spaceBetween,
                                   children: [
-                                    AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      width: 44,
-                                      height: 44,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
+                                    IconButton(
+                                      tooltip: _isShuffleEnabled
+                                          ? 'Shuffle on'
+                                          : 'Shuffle off',
+                                      onPressed: _toggleShuffle,
+                                      iconSize: 24,
+                                      icon: Icon(
+                                        Icons.shuffle_rounded,
                                         color: _isShuffleEnabled
-                                            ? const Color(0xFF356DCE)
-                                            : Colors.white.withValues(
-                                                alpha: 0.08,
-                                              ),
-                                        border: Border.all(
-                                          color: _isShuffleEnabled
-                                              ? const Color(0xFF9EC2FF)
-                                              : Colors.white.withValues(
-                                                  alpha: 0.18,
-                                                ),
-                                        ),
-                                      ),
-                                      child: IconButton(
-                                        tooltip: _isShuffleEnabled
-                                            ? 'Shuffle on'
-                                            : 'Shuffle off',
-                                        onPressed: _toggleShuffle,
-                                        iconSize: 24,
-                                        icon: const Icon(
-                                          Icons.shuffle_rounded,
-                                          color: Colors.white,
-                                        ),
+                                            ? const Color(0xFF9EC2FF)
+                                            : Colors.white,
                                       ),
                                     ),
                                     Row(
@@ -1028,23 +1002,13 @@ class _MainScreenState extends State<MainScreen> {
                                               color: Color(0xFF0B3B8C),
                                               shape: BoxShape.circle,
                                             ),
-                                            child: isLoading
-                                                ? const Padding(
-                                                    padding: EdgeInsets.all(22),
-                                                    child:
-                                                        CircularProgressIndicator(
-                                                          strokeWidth: 3,
-                                                          color: Colors.white,
-                                                        ),
-                                                  )
-                                                : Icon(
-                                                    isPlaying
-                                                        ? Icons.pause_rounded
-                                                        : Icons
-                                                              .play_arrow_rounded,
-                                                    color: Colors.white,
-                                                    size: 44,
-                                                  ),
+                                            child: Icon(
+                                              isPlaying
+                                                  ? Icons.pause_rounded
+                                                  : Icons.play_arrow_rounded,
+                                              color: Colors.white,
+                                              size: 44,
+                                            ),
                                           ),
                                         ),
                                         const SizedBox(width: 6),
@@ -1061,38 +1025,15 @@ class _MainScreenState extends State<MainScreen> {
                                         ),
                                       ],
                                     ),
-                                    AnimatedContainer(
-                                      duration: const Duration(
-                                        milliseconds: 180,
-                                      ),
-                                      width: 44,
-                                      height: 44,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        color:
-                                            _repeatMode == QueueRepeatMode.song
-                                            ? const Color(0xFF4D7ED4)
-                                            : (repeatActive
-                                                  ? const Color(0xFF356DCE)
-                                                  : Colors.white.withValues(
-                                                      alpha: 0.08,
-                                                    )),
-                                        border: Border.all(
-                                          color: repeatActive
-                                              ? const Color(0xFF9EC2FF)
-                                              : Colors.white.withValues(
-                                                  alpha: 0.18,
-                                                ),
-                                        ),
-                                      ),
-                                      child: IconButton(
-                                        tooltip: _repeatModeLabel(),
-                                        onPressed: _cycleRepeatMode,
-                                        iconSize: 24,
-                                        icon: Icon(
-                                          repeatIcon,
-                                          color: Colors.white,
-                                        ),
+                                    IconButton(
+                                      tooltip: _repeatModeLabel(),
+                                      onPressed: _cycleRepeatMode,
+                                      iconSize: 24,
+                                      icon: Icon(
+                                        repeatIcon,
+                                        color: repeatActive
+                                            ? const Color(0xFF9EC2FF)
+                                            : Colors.white,
                                       ),
                                     ),
                                   ],
@@ -1179,32 +1120,6 @@ class _MainScreenState extends State<MainScreen> {
                                     valueListenable:
                                         _player.playbackStateNotifier,
                                     builder: (context, state, _) {
-                                      final isLoading =
-                                          state == PlayerPlaybackState.loading;
-                                      if (isLoading) {
-                                        return Row(
-                                          children: [
-                                            const SizedBox(
-                                              width: 10,
-                                              height: 10,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                              ),
-                                            ),
-                                            const SizedBox(width: 6),
-                                            Text(
-                                              'Buffering',
-                                              style: TextStyle(
-                                                color: Colors.white.withValues(
-                                                  alpha: 0.78,
-                                                ),
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                          ],
-                                        );
-                                      }
-
                                       return Text(
                                         song.artist ?? 'Unknown Artist',
                                         maxLines: 1,
@@ -1254,20 +1169,12 @@ class _MainScreenState extends State<MainScreen> {
                               onPressed: isLoading
                                   ? null
                                   : () => unawaited(_togglePlayPause()),
-                              icon: isLoading
-                                  ? const SizedBox(
-                                      width: 18,
-                                      height: 18,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : Icon(
-                                      isPlaying
-                                          ? Icons.pause_circle_filled_rounded
-                                          : Icons.play_circle_fill_rounded,
-                                      size: 30,
-                                    ),
+                              icon: Icon(
+                                isPlaying
+                                    ? Icons.pause_circle_filled_rounded
+                                    : Icons.play_circle_fill_rounded,
+                                size: 30,
+                              ),
                               color: Colors.white,
                               tooltip: isPlaying ? 'Pause' : 'Play',
                             ),

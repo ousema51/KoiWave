@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/song.dart';
+import '../services/offline_audio_cache_service.dart';
+import '../services/offline_library_service.dart';
 import '../services/music_service.dart';
 import '../services/auth_service.dart';
 
@@ -22,8 +24,11 @@ class LibraryScreen extends StatefulWidget {
 class _LibraryScreenState extends State<LibraryScreen> {
   final MusicService _musicService = MusicService();
   final AuthService _authService = AuthService();
+  final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final OfflineAudioCacheService _audioCache = OfflineAudioCacheService();
   List<Song> _likedSongs = [];
   List<Map<String, dynamic>> _playlists = [];
+  final Set<String> _playlistDownloadsInProgress = <String>{};
   bool _isLoading = true;
   bool _isLoggedIn = false;
 
@@ -145,6 +150,107 @@ class _LibraryScreenState extends State<LibraryScreen> {
     return songs is List ? songs.length : 0;
   }
 
+  Future<void> _downloadPlaylistAudio(Map<String, dynamic> playlist) async {
+    final playlistId = (playlist['_id'] ?? '').toString().trim();
+    final playlistNameFallback = (playlist['name'] ?? 'Playlist').toString();
+
+    if (playlistId.isEmpty ||
+        _playlistDownloadsInProgress.contains(playlistId)) {
+      return;
+    }
+
+    setState(() {
+      _playlistDownloadsInProgress.add(playlistId);
+    });
+
+    try {
+      final details = await _musicService.getPlaylist(playlistId);
+      if (!mounted) {
+        return;
+      }
+
+      if (details == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Could not load playlist for download'),
+            backgroundColor: Colors.red[700],
+          ),
+        );
+        return;
+      }
+
+      final playlistName = (details['name'] ?? playlistNameFallback)
+          .toString()
+          .trim();
+      final rawSongs = details['songs'] as List<dynamic>? ?? const [];
+      final songs = rawSongs
+          .whereType<Map>()
+          .map((item) => Song.fromJson(Map<String, dynamic>.from(item)))
+          .toList();
+
+      if (songs.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Playlist has no songs to download'),
+            backgroundColor: Colors.orange[700],
+          ),
+        );
+        return;
+      }
+
+      await _offlineLibrary.cachePlaylist(playlistId, playlistName, songs);
+      final result = await _audioCache.downloadMissingSongs(songs);
+
+      if (!mounted) {
+        return;
+      }
+
+      final downloaded = _toInt(result['downloaded']);
+      final skipped = _toInt(result['skipped']);
+      final failed = _toInt(result['failed']);
+      final downloadedBytes = _toInt(result['downloaded_bytes']);
+      final downloadedMb = downloadedBytes / (1024 * 1024);
+
+      final message = failed > 0
+          ? '$playlistName: $downloaded downloaded, $skipped cached, $failed failed.'
+          : '$playlistName: $downloaded downloaded, $skipped cached (${downloadedMb.toStringAsFixed(1)} MB).';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: failed > 0 ? Colors.orange[700] : Colors.green[700],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Playlist download failed: $e'),
+          backgroundColor: Colors.red[700],
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _playlistDownloadsInProgress.remove(playlistId);
+        });
+      }
+    }
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is double) {
+      return value.toInt();
+    }
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -259,8 +365,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       ),
 
                       // User playlists
-                      ..._playlists.map(
-                        (playlist) => Container(
+                      ..._playlists.map((playlist) {
+                        final playlistId = (playlist['_id'] ?? '')
+                            .toString()
+                            .trim();
+                        final isDownloading = _playlistDownloadsInProgress
+                            .contains(playlistId);
+
+                        return Container(
                           margin: const EdgeInsets.only(bottom: 4),
                           child: ListTile(
                             contentPadding: const EdgeInsets.symmetric(
@@ -295,15 +407,32 @@ class _LibraryScreenState extends State<LibraryScreen> {
                                 fontSize: 13,
                               ),
                             ),
+                            trailing: IconButton(
+                              tooltip: isDownloading
+                                  ? 'Downloading audio...'
+                                  : 'Download missing audio',
+                              onPressed: playlistId.isEmpty || isDownloading
+                                  ? null
+                                  : () => _downloadPlaylistAudio(playlist),
+                              icon: isDownloading
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                      ),
+                                    )
+                                  : const Icon(Icons.download_rounded),
+                            ),
                             onTap: () {
-                              final playlistId = (playlist['_id'] ?? '')
-                                  .toString();
-                              if (playlistId.isEmpty) return;
+                              if (playlistId.isEmpty) {
+                                return;
+                              }
                               widget.onOpenPlaylist(playlistId);
                             },
                           ),
-                        ),
-                      ),
+                        );
+                      }),
                     ],
                   ),
                 ),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:just_audio/just_audio.dart';
@@ -114,6 +115,30 @@ class PlayerService {
 
     await _audioPlayer.stop();
     await _audioPlayer.setAudioSource(source);
+    await _audioPlayer.play();
+  }
+
+  Future<void> playLocalFile({
+    required Song song,
+    required String filePath,
+  }) async {
+    final trimmedPath = filePath.trim();
+    if (trimmedPath.isEmpty) {
+      throw StateError('filePath cannot be empty');
+    }
+
+    final file = File(trimmedPath);
+    if (!await file.exists()) {
+      throw StateError('Cached audio file not found');
+    }
+
+    _currentSong = song;
+    playbackStateNotifier.value = PlayerPlaybackState.loading;
+    positionNotifier.value = Duration.zero;
+    bufferedPositionNotifier.value = Duration.zero;
+
+    await _audioPlayer.stop();
+    await _audioPlayer.setFilePath(trimmedPath);
     await _audioPlayer.play();
   }
 

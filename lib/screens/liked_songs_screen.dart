@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/offline_audio_cache_service.dart';
 import '../services/offline_library_service.dart';
 import '../widgets/song_tile.dart';
 
@@ -24,8 +25,11 @@ class LikedSongsScreen extends StatefulWidget {
 class _LikedSongsScreenState extends State<LikedSongsScreen> {
   final MusicService _musicService = MusicService();
   final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final OfflineAudioCacheService _audioCache = OfflineAudioCacheService();
   bool _isLoading = true;
+  bool _isDownloadInProgress = false;
   List<Song> _likedSongs = [];
+  Set<String> _cachedSongKeys = <String>{};
   List<Map<String, dynamic>> _playlists = [];
 
   @override
@@ -39,32 +43,93 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
     try {
       final likedSongs = await _musicService.getLikedSongs();
       final playlists = await _musicService.getMyPlaylists();
+      final cachedSongKeys = await _audioCache.getCachedSongKeys(likedSongs);
 
       if (!mounted) return;
       setState(() {
         _likedSongs = likedSongs;
+        _cachedSongKeys = cachedSongKeys;
         _playlists = playlists;
         _isLoading = false;
       });
     } catch (_) {
       final cachedLiked = await _offlineLibrary.getCachedLikedSongs();
+      final cachedSongKeys = await _audioCache.getCachedSongKeys(cachedLiked);
       if (!mounted) return;
       setState(() {
         _likedSongs = cachedLiked;
+        _cachedSongKeys = cachedSongKeys;
         _isLoading = false;
       });
     }
   }
 
   Future<void> _downloadLibrary() async {
-    final count = await _offlineLibrary.cacheLikedSongs(_likedSongs);
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Saved $count songs for offline library access.'),
-        backgroundColor: Colors.green[700],
-      ),
-    );
+    if (_likedSongs.isEmpty || _isDownloadInProgress) {
+      return;
+    }
+
+    setState(() {
+      _isDownloadInProgress = true;
+    });
+
+    try {
+      await _offlineLibrary.cacheLikedSongs(_likedSongs);
+      final result = await _audioCache.downloadMissingSongs(_likedSongs);
+      if (!mounted) {
+        return;
+      }
+
+      final downloaded = _toInt(result['downloaded']);
+      final skipped = _toInt(result['skipped']);
+      final failed = _toInt(result['failed']);
+      final downloadedBytes = _toInt(result['downloaded_bytes']);
+      final downloadedMb = downloadedBytes / (1024 * 1024);
+
+      final message = failed > 0
+          ? 'Downloaded $downloaded, already cached $skipped, failed $failed.'
+          : 'Offline ready: $downloaded downloaded, $skipped cached (${downloadedMb.toStringAsFixed(1)} MB).';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: failed > 0 ? Colors.orange[700] : Colors.green[700],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Download failed: $e'),
+          backgroundColor: Colors.red[700],
+        ),
+      );
+    } finally {
+      final refreshedKeys = await _audioCache.getCachedSongKeys(_likedSongs);
+      if (mounted) {
+        setState(() {
+          _isDownloadInProgress = false;
+          _cachedSongKeys = refreshedKeys;
+        });
+      }
+    }
+  }
+
+  bool _isSongCached(Song song) {
+    return _cachedSongKeys.contains(_audioCache.cacheKeyForSong(song));
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is double) {
+      return value.toInt();
+    }
+    return int.tryParse(value?.toString() ?? '') ?? 0;
   }
 
   Future<void> _unlikeSong(Song song) async {
@@ -77,7 +142,9 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['message']?.toString() ?? 'Could not unlike song'),
+          content: Text(
+            result['message']?.toString() ?? 'Could not unlike song',
+          ),
           backgroundColor: Colors.red[700],
         ),
       );
@@ -115,13 +182,15 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
             itemCount: _playlists.length,
             itemBuilder: (context, index) {
               final playlist = _playlists[index];
-              final playlistName =
-                  (playlist['name'] ?? 'Untitled Playlist').toString();
+              final playlistName = (playlist['name'] ?? 'Untitled Playlist')
+                  .toString();
               final playlistId = (playlist['_id'] ?? '').toString();
 
               return ListTile(
-                leading: const Icon(Icons.queue_music_rounded,
-                    color: Colors.white70),
+                leading: const Icon(
+                  Icons.queue_music_rounded,
+                  color: Colors.white70,
+                ),
                 title: Text(playlistName),
                 subtitle: Text(
                   '${_playlistSongCount(playlist)} songs',
@@ -130,8 +199,10 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
                 onTap: () async {
                   final navigator = Navigator.of(parentContext);
                   final messenger = ScaffoldMessenger.of(parentContext);
-                  final result =
-                      await _musicService.addSongToPlaylist(playlistId, song);
+                  final result = await _musicService.addSongToPlaylist(
+                    playlistId,
+                    song,
+                  );
 
                   if (!mounted) return;
                   navigator.pop();
@@ -173,9 +244,19 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
         title: const Text('Liked Songs'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.download_rounded),
-            tooltip: 'Download library',
-            onPressed: _likedSongs.isEmpty ? null : _downloadLibrary,
+            icon: _isDownloadInProgress
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download_rounded),
+            tooltip: _isDownloadInProgress
+                ? 'Downloading audio...'
+                : 'Download audio',
+            onPressed: _likedSongs.isEmpty || _isDownloadInProgress
+                ? null
+                : _downloadLibrary,
           ),
         ],
       ),
@@ -184,34 +265,50 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
               child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
             )
           : _likedSongs.isEmpty
-              ? Center(
-                  child: Text(
-                    'No liked songs yet',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 16),
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadData,
-                  color: const Color(0xFF0B3B8C),
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 12),
-                    itemCount: _likedSongs.length,
-                    itemBuilder: (context, index) {
-                      final song = _likedSongs[index];
-                      return ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                        title: SongTile(
-                          song: song,
-                          onTap: () => widget.onSongSelected(song, _likedSongs),
-                        ),
-                        trailing: PopupMenuButton<String>(
+          ? Center(
+              child: Text(
+                'No liked songs yet',
+                style: TextStyle(color: Colors.grey[400], fontSize: 16),
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _loadData,
+              color: const Color(0xFF0B3B8C),
+              child: ListView.builder(
+                padding: const EdgeInsets.only(bottom: 12),
+                itemCount: _likedSongs.length,
+                itemBuilder: (context, index) {
+                  final song = _likedSongs[index];
+                  final isCached = _isSongCached(song);
+
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                    title: SongTile(
+                      song: song,
+                      onTap: () => widget.onSongSelected(song, _likedSongs),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isCached)
+                          const Padding(
+                            padding: EdgeInsets.only(right: 4),
+                            child: Icon(
+                              Icons.download_done_rounded,
+                              size: 16,
+                              color: Color(0xFF0B3B8C),
+                            ),
+                          ),
+                        PopupMenuButton<String>(
                           onSelected: (value) async {
                             if (value == 'add_to_playlist') {
                               _showChoosePlaylistForSong(song);
                             } else if (value == 'add_to_queue') {
                               final messenger = ScaffoldMessenger.of(context);
-                              final added =
-                                  await widget.onAddToQueue(song, _likedSongs);
+                              final added = await widget.onAddToQueue(
+                                song,
+                                _likedSongs,
+                              );
                               if (!mounted) return;
                               messenger.showSnackBar(
                                 SnackBar(
@@ -220,8 +317,9 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
                                         ? 'Added to queue'
                                         : 'Song is already in queue',
                                   ),
-                                  backgroundColor:
-                                      added ? Colors.green[700] : Colors.orange[700],
+                                  backgroundColor: added
+                                      ? Colors.green[700]
+                                      : Colors.orange[700],
                                 ),
                               );
                             } else if (value == 'remove_liked') {
@@ -243,11 +341,12 @@ class _LikedSongsScreenState extends State<LikedSongsScreen> {
                             ),
                           ],
                         ),
-                      );
-                    },
-                  ),
-                ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
     );
   }
 }
-

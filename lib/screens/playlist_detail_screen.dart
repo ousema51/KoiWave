@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../models/song.dart';
 import '../services/music_service.dart';
+import '../services/offline_audio_cache_service.dart';
 import '../services/offline_library_service.dart';
 import '../services/user_activity_service.dart';
 import '../widgets/song_tile.dart';
@@ -27,11 +30,20 @@ class PlaylistDetailScreen extends StatefulWidget {
 class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
   final MusicService _musicService = MusicService();
   final OfflineLibraryService _offlineLibrary = OfflineLibraryService();
+  final OfflineAudioCacheService _audioCache = OfflineAudioCacheService();
   final UserActivityService _activity = UserActivityService();
 
   Map<String, dynamic>? _playlist;
   List<Song> _songs = [];
+  Set<String> _cachedSongKeys = <String>{};
   bool _isLoading = true;
+  bool _isDownloadInProgress = false;
+  int _downloadProcessed = 0;
+  int _downloadTotal = 0;
+  int _downloadedCount = 0;
+  int _skippedCount = 0;
+  int _failedCount = 0;
+  String? _downloadCurrentTitle;
 
   @override
   void initState() {
@@ -68,22 +80,181 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     setState(() {
       _playlist = playlist;
       _songs = songs;
+      _cachedSongKeys = <String>{};
       _isLoading = false;
+    });
+
+    unawaited(_refreshCachedIndicators(songs));
+  }
+
+  Future<void> _refreshCachedIndicators([List<Song>? songs]) async {
+    final targetSongs = songs ?? _songs;
+    if (targetSongs.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _cachedSongKeys = <String>{};
+      });
+      return;
+    }
+
+    final keys = await _audioCache.getCachedSongKeys(targetSongs);
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _cachedSongKeys = keys;
     });
   }
 
   Future<void> _downloadPlaylistLibrary() async {
+    if (_songs.isEmpty || _isDownloadInProgress) {
+      return;
+    }
+
+    setState(() {
+      _isDownloadInProgress = true;
+      _downloadProcessed = 0;
+      _downloadTotal = _songs.length;
+      _downloadedCount = 0;
+      _skippedCount = 0;
+      _failedCount = 0;
+      _downloadCurrentTitle = null;
+    });
+
     final playlistName = (_playlist?['name'] ?? 'Playlist').toString();
-    final count = await _offlineLibrary.cachePlaylist(
-      widget.playlistId,
-      playlistName,
-      _songs,
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('Saved $count songs for offline library access.'),
-        backgroundColor: Colors.green[700],
+    try {
+      await _offlineLibrary.cachePlaylist(
+        widget.playlistId,
+        playlistName,
+        _songs,
+      );
+
+      final result = await _audioCache.downloadMissingSongs(
+        _songs,
+        onProgress: (progress) {
+          if (!mounted) {
+            return;
+          }
+
+          setState(() {
+            _downloadProcessed = progress.processed;
+            _downloadTotal = progress.total;
+            _downloadedCount = progress.downloaded;
+            _skippedCount = progress.skipped;
+            _failedCount = progress.failed;
+            _downloadCurrentTitle = progress.currentSong?.title;
+
+            final currentSong = progress.currentSong;
+            final currentStatus = progress.currentStatus;
+            if (currentSong != null &&
+                (currentStatus == AudioCacheItemStatus.downloaded ||
+                    currentStatus == AudioCacheItemStatus.skipped)) {
+              _cachedSongKeys.add(_audioCache.cacheKeyForSong(currentSong));
+            }
+          });
+        },
+      );
+      if (!mounted) {
+        return;
+      }
+
+      final downloaded = _toInt(result['downloaded']);
+      final skipped = _toInt(result['skipped']);
+      final failed = _toInt(result['failed']);
+      final downloadedBytes = _toInt(result['downloaded_bytes']);
+      final downloadedMb = downloadedBytes / (1024 * 1024);
+
+      final message = failed > 0
+          ? 'Downloaded $downloaded, already cached $skipped, failed $failed.'
+          : 'Playlist ready offline: $downloaded downloaded, $skipped cached (${downloadedMb.toStringAsFixed(1)} MB).';
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: failed > 0 ? Colors.orange[700] : Colors.green[700],
+        ),
+      );
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Playlist download failed: $e'),
+          backgroundColor: Colors.red[700],
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDownloadInProgress = false;
+          _downloadCurrentTitle = null;
+        });
+      }
+      unawaited(_refreshCachedIndicators());
+    }
+  }
+
+  int _toInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+    if (value is double) {
+      return value.toInt();
+    }
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  bool _isSongCached(Song song) {
+    return _cachedSongKeys.contains(_audioCache.cacheKeyForSong(song));
+  }
+
+  Widget _buildDownloadProgressHeader() {
+    final total = _downloadTotal <= 0 ? 1 : _downloadTotal;
+    final fraction = (_downloadProcessed / total).clamp(0.0, 1.0);
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1F1F1F),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Caching songs... $_downloadProcessed/$_downloadTotal',
+            style: const TextStyle(fontWeight: FontWeight.w600),
+          ),
+          if ((_downloadCurrentTitle ?? '').isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _downloadCurrentTitle!,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.grey[400], fontSize: 12),
+              ),
+            ),
+          const SizedBox(height: 8),
+          LinearProgressIndicator(
+            value: fraction,
+            minHeight: 5,
+            backgroundColor: Colors.white.withValues(alpha: 0.12),
+            valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFF0B3B8C)),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Downloaded $_downloadedCount  •  Cached $_skippedCount  •  Failed $_failedCount',
+            style: TextStyle(color: Colors.grey[400], fontSize: 12),
+          ),
+        ],
       ),
     );
   }
@@ -123,7 +294,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('Save', style: TextStyle(color: Color(0xFF0B3B8C))),
+              child: const Text(
+                'Save',
+                style: TextStyle(color: Color(0xFF0B3B8C)),
+              ),
             ),
           ],
         );
@@ -132,7 +306,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
     if (newName == null || newName.isEmpty || _playlist == null) return;
 
-    final result = await _musicService.renamePlaylist(widget.playlistId, newName);
+    final result = await _musicService.renamePlaylist(
+      widget.playlistId,
+      newName,
+    );
     if (!mounted) return;
 
     if (result['success'] == true) {
@@ -147,7 +324,9 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(result['message']?.toString() ?? 'Could not rename playlist'),
+          content: Text(
+            result['message']?.toString() ?? 'Could not rename playlist',
+          ),
           backgroundColor: Colors.red[700],
         ),
       );
@@ -171,7 +350,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete', style: TextStyle(color: Colors.redAccent)),
+              child: const Text(
+                'Delete',
+                style: TextStyle(color: Colors.redAccent),
+              ),
             ),
           ],
         );
@@ -190,15 +372,19 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
 
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(result['message']?.toString() ?? 'Could not delete playlist'),
+        content: Text(
+          result['message']?.toString() ?? 'Could not delete playlist',
+        ),
         backgroundColor: Colors.red[700],
       ),
     );
   }
 
   Future<void> _removeSong(Song song) async {
-    final result =
-        await _musicService.removeSongFromPlaylist(widget.playlistId, song.id);
+    final result = await _musicService.removeSongFromPlaylist(
+      widget.playlistId,
+      song.id,
+    );
 
     if (!mounted) return;
 
@@ -233,8 +419,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
             ),
             TextButton(
               onPressed: () => Navigator.pop(context, true),
-              child: const Text('Remove',
-                  style: TextStyle(color: Colors.redAccent)),
+              child: const Text(
+                'Remove',
+                style: TextStyle(color: Colors.redAccent),
+              ),
             ),
           ],
         );
@@ -272,7 +460,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                   children: [
                     const Text(
                       'Add Songs',
-                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
@@ -281,8 +472,10 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                       decoration: InputDecoration(
                         hintText: 'Search songs to add',
                         hintStyle: TextStyle(color: Colors.grey[500]),
-                        prefixIcon:
-                            Icon(Icons.search_rounded, color: Colors.grey[400]),
+                        prefixIcon: Icon(
+                          Icons.search_rounded,
+                          color: Colors.grey[400],
+                        ),
                         filled: true,
                         fillColor: const Color(0xFF282828),
                         border: OutlineInputBorder(
@@ -342,10 +535,14 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 ),
                                 onTap: () async {
                                   final navigator = Navigator.of(parentContext);
-                                  final messenger =
-                                      ScaffoldMessenger.of(parentContext);
+                                  final messenger = ScaffoldMessenger.of(
+                                    parentContext,
+                                  );
                                   final res = await _musicService
-                                      .addSongToPlaylist(widget.playlistId, song);
+                                      .addSongToPlaylist(
+                                        widget.playlistId,
+                                        song,
+                                      );
                                   if (!mounted) return;
                                   if (res['success'] == true) {
                                     navigator.pop();
@@ -410,10 +607,14 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
                                 ),
                                 onTap: () async {
                                   final navigator = Navigator.of(parentContext);
-                                  final messenger =
-                                      ScaffoldMessenger.of(parentContext);
+                                  final messenger = ScaffoldMessenger.of(
+                                    parentContext,
+                                  );
                                   final res = await _musicService
-                                      .addSongToPlaylist(widget.playlistId, song);
+                                      .addSongToPlaylist(
+                                        widget.playlistId,
+                                        song,
+                                      );
                                   if (!mounted) return;
                                   if (res['success'] == true) {
                                     navigator.pop();
@@ -464,19 +665,31 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
         ),
         title: Text(name),
         actions: [
+          IconButton(
+            icon: _isDownloadInProgress
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.download_rounded),
+            tooltip: _isDownloadInProgress
+                ? 'Downloading audio...'
+                : 'Download audio',
+            onPressed: _songs.isEmpty || _isDownloadInProgress
+                ? null
+                : _downloadPlaylistLibrary,
+          ),
           PopupMenuButton<String>(
             onSelected: (value) {
               if (value == 'rename') {
                 _renamePlaylist();
-              } else if (value == 'download') {
-                _downloadPlaylistLibrary();
               } else if (value == 'delete') {
                 _deletePlaylist();
               }
             },
             itemBuilder: (context) => const [
               PopupMenuItem(value: 'rename', child: Text('Rename')),
-              PopupMenuItem(value: 'download', child: Text('Download library')),
               PopupMenuItem(value: 'delete', child: Text('Delete')),
             ],
           ),
@@ -493,89 +706,119 @@ class _PlaylistDetailScreenState extends State<PlaylistDetailScreen> {
               child: CircularProgressIndicator(color: Color(0xFF0B3B8C)),
             )
           : _songs.isEmpty
-              ? Center(
-                  child: Text(
-                    'No songs in this playlist yet',
-                    style: TextStyle(color: Colors.grey[400], fontSize: 16),
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadPlaylist,
-                  color: const Color(0xFF0B3B8C),
-                  child: ListView.builder(
-                    padding: const EdgeInsets.only(bottom: 90),
-                    itemCount: _songs.length,
-                    itemBuilder: (context, index) {
-                      final song = _songs[index];
-                      return Dismissible(
-                        key: ValueKey('${song.id}-${index.toString()}'),
-                        background: Container(
-                          color: Colors.red[700],
-                          alignment: Alignment.centerRight,
-                          padding: const EdgeInsets.symmetric(horizontal: 16),
-                          child: const Icon(Icons.delete_rounded,
-                              color: Colors.white),
-                        ),
-                        direction: DismissDirection.endToStart,
-                        confirmDismiss: (_) async {
-                          await _removeSong(song);
-                          return false;
-                        },
-                        child: ListTile(
-                          contentPadding:
-                              const EdgeInsets.symmetric(horizontal: 8),
-                          title: SongTile(
-                            song: song,
-                            onTap: () async {
-                              await _activity.recordPlaylistPlay(
-                                playlistId: widget.playlistId,
-                                playlistName:
-                                    (_playlist?['name'] ?? 'Playlist').toString(),
-                                coverUrl: song.coverUrl,
-                              );
-                              widget.onSongSelected(song, _songs);
-                            },
+          ? Center(
+              child: Text(
+                'No songs in this playlist yet',
+                style: TextStyle(color: Colors.grey[400], fontSize: 16),
+              ),
+            )
+          : Column(
+              children: [
+                if (_isDownloadInProgress) _buildDownloadProgressHeader(),
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _loadPlaylist,
+                    color: const Color(0xFF0B3B8C),
+                    child: ListView.builder(
+                      padding: const EdgeInsets.only(bottom: 90),
+                      itemCount: _songs.length,
+                      itemBuilder: (context, index) {
+                        final song = _songs[index];
+                        final isCached = _isSongCached(song);
+
+                        return Dismissible(
+                          key: ValueKey('${song.id}-${index.toString()}'),
+                          background: Container(
+                            color: Colors.red[700],
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.symmetric(horizontal: 16),
+                            child: const Icon(
+                              Icons.delete_rounded,
+                              color: Colors.white,
+                            ),
                           ),
-                          trailing: PopupMenuButton<String>(
-                            onSelected: (value) async {
-                              if (value == 'add_to_queue') {
-                                final messenger = ScaffoldMessenger.of(context);
-                                final added =
-                                    await widget.onAddToQueue(song, _songs);
-                                if (!mounted) return;
-                                messenger.showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      added
-                                          ? 'Added to queue'
-                                          : 'Song is already in queue',
-                                    ),
-                                    backgroundColor: added
-                                        ? Colors.green[700]
-                                        : Colors.orange[700],
-                                  ),
+                          direction: DismissDirection.endToStart,
+                          confirmDismiss: (_) async {
+                            await _removeSong(song);
+                            return false;
+                          },
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 8,
+                            ),
+                            title: SongTile(
+                              song: song,
+                              onTap: () async {
+                                await _activity.recordPlaylistPlay(
+                                  playlistId: widget.playlistId,
+                                  playlistName:
+                                      (_playlist?['name'] ?? 'Playlist')
+                                          .toString(),
+                                  coverUrl: song.coverUrl,
                                 );
-                              } else if (value == 'remove') {
-                                await _confirmAndRemoveSong(song);
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'add_to_queue',
-                                child: Text('Add to queue'),
-                              ),
-                              PopupMenuItem(
-                                value: 'remove',
-                                child: Text('Remove from playlist'),
-                              ),
-                            ],
+                                widget.onSongSelected(song, _songs);
+                              },
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isCached)
+                                  const Padding(
+                                    padding: EdgeInsets.only(right: 4),
+                                    child: Icon(
+                                      Icons.download_done_rounded,
+                                      size: 16,
+                                      color: Color(0xFF0B3B8C),
+                                    ),
+                                  ),
+                                PopupMenuButton<String>(
+                                  onSelected: (value) async {
+                                    if (value == 'add_to_queue') {
+                                      final messenger = ScaffoldMessenger.of(
+                                        context,
+                                      );
+                                      final added = await widget.onAddToQueue(
+                                        song,
+                                        _songs,
+                                      );
+                                      if (!mounted) return;
+                                      messenger.showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                            added
+                                                ? 'Added to queue'
+                                                : 'Song is already in queue',
+                                          ),
+                                          backgroundColor: added
+                                              ? Colors.green[700]
+                                              : Colors.orange[700],
+                                        ),
+                                      );
+                                    } else if (value == 'remove') {
+                                      await _confirmAndRemoveSong(song);
+                                    }
+                                  },
+                                  itemBuilder: (context) => const [
+                                    PopupMenuItem(
+                                      value: 'add_to_queue',
+                                      child: Text('Add to queue'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'remove',
+                                      child: Text('Remove from playlist'),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
+                        );
+                      },
+                    ),
                   ),
                 ),
+              ],
+            ),
     );
   }
 }
-
