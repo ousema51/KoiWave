@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+import base64
 from unittest.mock import patch
 
 from flask import Flask
@@ -143,6 +144,25 @@ class MusicStreamJsonRouteTests(unittest.TestCase):
         self.assertEqual(args[0], "https://audio.example.com/raw-stream.m4a")
         self.assertEqual(kwargs["headers"]["Range"], "bytes=0-5")
         self.assertEqual(kwargs["headers"]["Authorization"], "Bearer token")
+
+    def test_cookie_header_string_is_normalized_to_netscape(self):
+        raw_cookie_header = "SID=abc123; SAPISID=xyz789; __Secure-3PAPISID=secure123"
+        normalized = music_routes.youtube_music._normalize_cookie_blob(raw_cookie_header)
+
+        self.assertTrue(normalized.startswith("# Netscape HTTP Cookie File"))
+        self.assertIn(".youtube.com", normalized)
+        self.assertIn(".google.com", normalized)
+        self.assertIn("\tSID\tabc123", normalized)
+
+    def test_pem_wrapped_base64_cookie_string_is_supported(self):
+        raw_cookie_header = "SID=abc123; SAPISID=xyz789"
+        encoded = base64.b64encode(raw_cookie_header.encode("utf-8")).decode("ascii")
+        pem_blob = "-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----".format(encoded)
+
+        normalized = music_routes.youtube_music._normalize_cookie_blob(pem_blob)
+
+        self.assertTrue(normalized.startswith("# Netscape HTTP Cookie File"))
+        self.assertIn("\tSID\tabc123", normalized)
 
 
 if __name__ == "__main__":

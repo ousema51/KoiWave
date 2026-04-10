@@ -67,6 +67,13 @@ cp .env.example .env
 | `YTDLP_PO_TOKEN`    | Optional yt-dlp YouTube PO token for restricted videos   |
 | `YTDLP_VISITOR_DATA`| Optional YouTube visitor data used with `YTDLP_PO_TOKEN` |
 
+Cookie loading priority used by this backend:
+1. `YTDLP_COOKIES_B64` / `YTDLP_COOKIES_BASE64`
+2. `YTDLP_COOKIEFILE`
+3. Local file fallback in `backend/cookies/` (`cookie.b64`, `cookies.b64`, `cookie.txt`, `cookies.txt`)
+
+The backend also auto-converts raw `Cookie:` header strings into Netscape cookie format, so `backend/cookies/cookie.txt` can contain either Netscape cookies or a single cookie header line.
+
 ### 3. Run locally
 
 ```bash

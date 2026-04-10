@@ -46,6 +46,21 @@ _RUNTIME_COOKIEFILE_LOCK = threading.Lock()
 _RUNTIME_COOKIEFILE_PATH = None
 _RUNTIME_COOKIEFILE_SIGNATURE = None
 
+_BACKEND_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_COOKIE_DIR = os.path.join(_BACKEND_ROOT, "cookies")
+
+_LOCAL_COOKIE_B64_CANDIDATES = (
+    "cookie.b64",
+    "cookies.b64",
+    "cookies.base64",
+)
+
+_LOCAL_COOKIE_TEXT_CANDIDATES = (
+    "cookie.txt",
+    "cookies.txt",
+    "youtube.cookies.txt",
+)
+
 
 def _get_int_env(name, default):
     raw = (os.environ.get(name) or "").strip()
@@ -157,34 +172,183 @@ def _cleanup_runtime_cookiefile():
 atexit.register(_cleanup_runtime_cookiefile)
 
 
+def _read_text_file(path, max_bytes=2_000_000):
+    try:
+        if not path or not os.path.exists(path) or not os.path.isfile(path):
+            return ""
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            data = f.read(max_bytes)
+            if not data:
+                return ""
+            return data.strip()
+    except Exception:
+        return ""
+
+
+def _looks_like_cookie_header(text):
+    if not text:
+        return False
+    if "=" not in text or ";" not in text:
+        return False
+    if "\t" in text:
+        return False
+    return True
+
+
+def _cookie_header_to_netscape(text):
+    if not text:
+        return ""
+
+    lines = ["# Netscape HTTP Cookie File"]
+    seen = set()
+    domains = (".youtube.com", ".google.com")
+
+    ignored_attrs = {
+        "path",
+        "domain",
+        "expires",
+        "max-age",
+        "samesite",
+        "secure",
+        "httponly",
+    }
+
+    for part in text.split(";"):
+        chunk = part.strip()
+        if not chunk or "=" not in chunk:
+            continue
+
+        name, value = chunk.split("=", 1)
+        name = name.strip()
+        value = value.strip()
+
+        if not name or name.lower() in ignored_attrs:
+            continue
+
+        secure = "TRUE" if name.startswith("__Secure-") or name.startswith("__Host-") else "FALSE"
+
+        for domain in domains:
+            key = (domain, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(
+                "{}\tTRUE\t/\t{}\t2147483647\t{}\t{}".format(
+                    domain,
+                    secure,
+                    name,
+                    value,
+                )
+            )
+
+    if len(lines) == 1:
+        return ""
+
+    return "\n".join(lines) + "\n"
+
+
+def _decode_base64_candidate(raw_blob):
+    if not raw_blob:
+        return ""
+
+    blob = raw_blob.strip()
+    if not blob:
+        return ""
+
+    raw_lines = blob.splitlines()
+    pem_lines = []
+    had_pem_markers = False
+    for line in raw_lines:
+        ln = line.strip()
+        if not ln:
+            continue
+        if ln.startswith("-----BEGIN") or ln.startswith("-----END"):
+            had_pem_markers = True
+            continue
+        pem_lines.append(ln)
+
+    if pem_lines and had_pem_markers:
+        blob = "".join(pem_lines)
+
+    try:
+        padded = blob + ("=" * ((4 - len(blob) % 4) % 4))
+        decoded = base64.b64decode(padded)
+        return decoded.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _discover_local_cookie_source():
+    for name in _LOCAL_COOKIE_B64_CANDIDATES:
+        path = os.path.join(_COOKIE_DIR, name)
+        data = _read_text_file(path)
+        if data:
+            return {"kind": "local_b64", "path": path, "blob": data}
+
+    for name in _LOCAL_COOKIE_TEXT_CANDIDATES:
+        path = os.path.join(_COOKIE_DIR, name)
+        data = _read_text_file(path)
+        if data:
+            return {"kind": "local_text", "path": path, "blob": data}
+
+    return {"kind": None, "path": None, "blob": ""}
+
+
+def _get_cookie_blob_source():
+    env_b64 = (os.environ.get("YTDLP_COOKIES_B64") or os.environ.get("YTDLP_COOKIES_BASE64") or "").strip()
+    if env_b64:
+        return {"kind": "env_b64", "path": None, "blob": env_b64}
+
+    env_cookiefile = (os.environ.get("YTDLP_COOKIEFILE") or "").strip()
+    if env_cookiefile:
+        file_blob = _read_text_file(env_cookiefile)
+        if file_blob:
+            return {"kind": "env_cookiefile", "path": env_cookiefile, "blob": file_blob}
+
+    discovered = _discover_local_cookie_source()
+    if discovered.get("blob"):
+        return discovered
+
+    return {"kind": None, "path": None, "blob": ""}
+
+
 def _read_cookie_blob_from_env():
-    return (os.environ.get("YTDLP_COOKIES_B64") or os.environ.get("YTDLP_COOKIES_BASE64") or "").strip()
+    source = _get_cookie_blob_source()
+    return (source.get("blob") or "").strip()
 
 
 def _normalize_cookie_blob(raw_blob):
     if not raw_blob:
         return ""
 
-    decoded_text = None
-    try:
-        padded = raw_blob + ("=" * ((4 - len(raw_blob) % 4) % 4))
-        decoded = base64.b64decode(padded)
-        decoded_text = decoded.decode("utf-8", errors="replace")
-    except Exception:
-        decoded_text = None
-
-    text = decoded_text if decoded_text else raw_blob
-    text = text.replace("\\n", "\n").strip()
-    if not text:
+    original = raw_blob.replace("\\n", "\n").strip()
+    if not original:
         return ""
 
-    if "youtube.com" not in text and "Netscape HTTP Cookie File" not in text:
-        return ""
+    decoded_text = _decode_base64_candidate(original)
 
-    if "Netscape HTTP Cookie File" not in text:
-        text = "# Netscape HTTP Cookie File\n{}\n".format(text)
+    candidates = []
+    if decoded_text:
+        candidates.append(decoded_text)
+    candidates.append(original)
 
-    return text
+    for candidate in candidates:
+        text = candidate.replace("\\n", "\n").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not text:
+            continue
+
+        if "Netscape HTTP Cookie File" in text:
+            return text if text.endswith("\n") else text + "\n"
+
+        if "\t" in text and ("youtube.com" in text or "google.com" in text):
+            return "# Netscape HTTP Cookie File\n{}\n".format(text)
+
+        if _looks_like_cookie_header(text):
+            normalized = _cookie_header_to_netscape(text)
+            if normalized:
+                return normalized
+
+    return ""
 
 
 def _materialize_cookiefile_from_env():
@@ -237,11 +401,10 @@ def _materialize_cookiefile_from_env():
 
 
 def _has_cookie_auth_config():
-    if (os.environ.get("YTDLP_COOKIEFILE") or "").strip():
+    source = _get_cookie_blob_source()
+    if source.get("blob"):
         return True
     if (os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or "").strip():
-        return True
-    if _read_cookie_blob_from_env():
         return True
     return False
 
@@ -376,23 +539,27 @@ def _build_ytdlp_options():
         "extractor_retries": 3,
         "retries": 3,
         "http_headers": dict(DEFAULT_STREAM_HEADERS),
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["android", "web"],
-                "player_skip": ["webpage", "configs"],
-            }
-        },
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
     }
 
-    cookie_file = (os.environ.get("YTDLP_COOKIEFILE") or "").strip()
-    if cookie_file and os.path.exists(cookie_file):
-        opts["cookiefile"] = cookie_file
+    ytdlp_format = (os.environ.get("YTDLP_FORMAT") or "").strip()
+    if ytdlp_format:
+        opts["format"] = ytdlp_format
 
-    if "cookiefile" not in opts:
-        runtime_cookiefile = _materialize_cookiefile_from_env()
-        if runtime_cookiefile:
-            opts["cookiefile"] = runtime_cookiefile
+    player_clients = (os.environ.get("YTDLP_PLAYER_CLIENTS") or "").strip()
+    if player_clients:
+        clients = [c.strip() for c in player_clients.split(",") if c.strip()]
+        if clients:
+            opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_client"] = clients
+
+    player_skip = (os.environ.get("YTDLP_PLAYER_SKIP") or "").strip()
+    if player_skip:
+        skip_items = [c.strip() for c in player_skip.split(",") if c.strip()]
+        if skip_items:
+            opts.setdefault("extractor_args", {}).setdefault("youtube", {})["player_skip"] = skip_items
+
+    runtime_cookiefile = _materialize_cookiefile_from_env()
+    if runtime_cookiefile:
+        opts["cookiefile"] = runtime_cookiefile
 
     # Format: browser[:profile[:keyring[:container]]]
     cookies_from_browser = (os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or "").strip()
@@ -816,8 +983,10 @@ def get_trending():
 
 def health_check():
     configured_cookie_file = (os.environ.get("YTDLP_COOKIEFILE") or "").strip()
-    cookie_blob = _read_cookie_blob_from_env()
+    cookie_source = _get_cookie_blob_source()
+    cookie_blob = (cookie_source.get("blob") or "").strip()
     materialized_cookie_file = _materialize_cookiefile_from_env() if cookie_blob else None
+    local_cookie_source = _discover_local_cookie_source()
 
     status = {
         "ytmusic": ytmusic is not None,
@@ -830,6 +999,10 @@ def health_check():
             (os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or "").strip()
         ),
         "cookies_b64_configured": bool(cookie_blob),
+        "cookie_blob_source": cookie_source.get("kind"),
+        "cookie_blob_source_path": cookie_source.get("path"),
+        "local_cookie_source_found": bool(local_cookie_source.get("blob")),
+        "local_cookie_source_path": local_cookie_source.get("path"),
         "runtime_cookiefile_materialized": bool(materialized_cookie_file),
         "po_token_configured": bool((os.environ.get("YTDLP_PO_TOKEN") or "").strip()),
         "visitor_data_configured": bool((os.environ.get("YTDLP_VISITOR_DATA") or "").strip()),
