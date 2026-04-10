@@ -61,6 +61,11 @@ cp .env.example .env
 |---------------------|----------------------------------------------------------|
 | `MONGODB_URI`       | MongoDB Atlas connection string                          |
 | `JWT_SECRET`        | Secret key used to sign JWT tokens (keep this secret!)   |
+| `YTDLP_COOKIEFILE`  | Absolute path to Netscape-format YouTube cookies file    |
+| `YTDLP_COOKIES_B64` | Base64 string of Netscape-format YouTube cookies file    |
+| `YTDLP_COOKIES_FROM_BROWSER` | Browser cookie source for yt-dlp (`chrome:Default`, etc.) |
+| `YTDLP_PO_TOKEN`    | Optional yt-dlp YouTube PO token for restricted videos   |
+| `YTDLP_VISITOR_DATA`| Optional YouTube visitor data used with `YTDLP_PO_TOKEN` |
 
 ### 3. Run locally
 
@@ -107,6 +112,9 @@ All responses follow the structure:
 |--------|-----------------------------|------|---------------------------------|
 | GET    | `/api/music/search`         | —    | Search (`?q=&type=songs|albums|artists|all`) |
 | GET    | `/api/music/song/<id>`      | —    | Get song details                |
+| GET    | `/api/music/stream/<id>`    | —    | Resolve stream payload (returns proxy-backed `audio_url`) |
+| GET    | `/api/music/stream`         | —    | Resolve stream by query (`?q=`) |
+| GET    | `/api/music/stream-proxy/<id>` | — | Audio proxy endpoint with range support for web/mobile playback |
 | GET    | `/api/music/album/<id>`     | —    | Get album details               |
 | GET    | `/api/music/artist/<id>`    | —    | Get artist details              |
 | GET    | `/api/music/trending`       | —    | Get trending songs              |

@@ -2,8 +2,14 @@
 YouTube Music backend search/metadata and stream resolution utilities.
 """
 
+import atexit
+import base64
+import copy
 import logging
 import os
+import tempfile
+import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +37,31 @@ DEFAULT_STREAM_HEADERS = {
     "Referer": "https://music.youtube.com/",
     "Origin": "https://music.youtube.com",
 }
+
+
+_STREAM_CACHE_LOCK = threading.Lock()
+_STREAM_CACHE = {}
+
+_RUNTIME_COOKIEFILE_LOCK = threading.Lock()
+_RUNTIME_COOKIEFILE_PATH = None
+_RUNTIME_COOKIEFILE_SIGNATURE = None
+
+
+def _get_int_env(name, default):
+    raw = (os.environ.get(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
+_STREAM_CACHE_TTL_SECONDS = max(30, _get_int_env("YTDLP_STREAM_CACHE_TTL_SECONDS", 240))
+_STREAM_CACHE_STALE_SECONDS = max(
+    _STREAM_CACHE_TTL_SECONDS,
+    _get_int_env("YTDLP_STREAM_CACHE_STALE_SECONDS", 1800),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -109,6 +140,165 @@ def _merged_stream_headers(raw_headers=None):
     return merged
 
 
+def _cleanup_runtime_cookiefile():
+    global _RUNTIME_COOKIEFILE_PATH
+
+    path = _RUNTIME_COOKIEFILE_PATH
+    if not path:
+        return
+
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_runtime_cookiefile)
+
+
+def _read_cookie_blob_from_env():
+    return (os.environ.get("YTDLP_COOKIES_B64") or os.environ.get("YTDLP_COOKIES_BASE64") or "").strip()
+
+
+def _normalize_cookie_blob(raw_blob):
+    if not raw_blob:
+        return ""
+
+    decoded_text = None
+    try:
+        padded = raw_blob + ("=" * ((4 - len(raw_blob) % 4) % 4))
+        decoded = base64.b64decode(padded)
+        decoded_text = decoded.decode("utf-8", errors="replace")
+    except Exception:
+        decoded_text = None
+
+    text = decoded_text if decoded_text else raw_blob
+    text = text.replace("\\n", "\n").strip()
+    if not text:
+        return ""
+
+    if "youtube.com" not in text and "Netscape HTTP Cookie File" not in text:
+        return ""
+
+    if "Netscape HTTP Cookie File" not in text:
+        text = "# Netscape HTTP Cookie File\n{}\n".format(text)
+
+    return text
+
+
+def _materialize_cookiefile_from_env():
+    global _RUNTIME_COOKIEFILE_PATH, _RUNTIME_COOKIEFILE_SIGNATURE
+
+    blob = _read_cookie_blob_from_env()
+    if not blob:
+        return None
+
+    normalized = _normalize_cookie_blob(blob)
+    if not normalized:
+        return None
+
+    signature = str(hash(normalized))
+
+    with _RUNTIME_COOKIEFILE_LOCK:
+        if (
+            _RUNTIME_COOKIEFILE_PATH
+            and _RUNTIME_COOKIEFILE_SIGNATURE == signature
+            and os.path.exists(_RUNTIME_COOKIEFILE_PATH)
+        ):
+            return _RUNTIME_COOKIEFILE_PATH
+
+        temp_file = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".cookies.txt",
+            delete=False,
+            newline="\n",
+        )
+        try:
+            temp_file.write(normalized)
+            temp_file.flush()
+            temp_path = temp_file.name
+        finally:
+            temp_file.close()
+
+        old_path = _RUNTIME_COOKIEFILE_PATH
+        _RUNTIME_COOKIEFILE_PATH = temp_path
+        _RUNTIME_COOKIEFILE_SIGNATURE = signature
+
+        if old_path and old_path != temp_path:
+            try:
+                if os.path.exists(old_path):
+                    os.remove(old_path)
+            except Exception:
+                pass
+
+        return _RUNTIME_COOKIEFILE_PATH
+
+
+def _has_cookie_auth_config():
+    if (os.environ.get("YTDLP_COOKIEFILE") or "").strip():
+        return True
+    if (os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or "").strip():
+        return True
+    if _read_cookie_blob_from_env():
+        return True
+    return False
+
+
+def _is_bot_challenge_message(message):
+    normalized = (message or "").lower()
+    if not normalized:
+        return False
+
+    markers = (
+        "sign in to confirm you're not a bot",
+        "sign in to confirm that you are not a bot",
+        "use --cookies-from-browser or --cookies",
+        "this video is unavailable",
+        "unable to extract initial player response",
+    )
+    return any(marker in normalized for marker in markers)
+
+
+def _stream_cache_get(video_id, allow_stale=False):
+    with _STREAM_CACHE_LOCK:
+        item = _STREAM_CACHE.get(video_id)
+        if not item:
+            return None
+
+        now = time.time()
+        fresh_until = item.get("fresh_until", 0)
+        stale_until = item.get("stale_until", 0)
+
+        if now <= fresh_until:
+            return copy.deepcopy(item.get("payload"))
+
+        if allow_stale and now <= stale_until:
+            payload = copy.deepcopy(item.get("payload"))
+            if isinstance(payload, dict):
+                payload["cache_stale"] = True
+            return payload
+
+        _STREAM_CACHE.pop(video_id, None)
+        return None
+
+
+def _stream_cache_set(video_id, payload):
+    if not video_id or not isinstance(payload, dict):
+        return
+
+    now = time.time()
+    entry = {
+        "payload": copy.deepcopy(payload),
+        "fresh_until": now + _STREAM_CACHE_TTL_SECONDS,
+        "stale_until": now + _STREAM_CACHE_STALE_SECONDS,
+    }
+
+    with _STREAM_CACHE_LOCK:
+        _STREAM_CACHE[video_id] = entry
+
+
 def _get_thumbnail(r):
     """Extract thumbnail URL with fallback handling."""
     if r is None:
@@ -183,21 +373,41 @@ def _build_ytdlp_options():
         "skip_download": True,
         "noplaylist": True,
         "socket_timeout": 15,
-        "extractor_retries": 2,
-        "retries": 2,
+        "extractor_retries": 3,
+        "retries": 3,
+        "http_headers": dict(DEFAULT_STREAM_HEADERS),
+        "extractor_args": {
+            "youtube": {
+                "player_client": ["android", "web"],
+                "player_skip": ["webpage", "configs"],
+            }
+        },
         "format": "bestaudio[ext=m4a]/bestaudio/best",
     }
 
     cookie_file = (os.environ.get("YTDLP_COOKIEFILE") or "").strip()
-    if cookie_file:
+    if cookie_file and os.path.exists(cookie_file):
         opts["cookiefile"] = cookie_file
+
+    if "cookiefile" not in opts:
+        runtime_cookiefile = _materialize_cookiefile_from_env()
+        if runtime_cookiefile:
+            opts["cookiefile"] = runtime_cookiefile
 
     # Format: browser[:profile[:keyring[:container]]]
     cookies_from_browser = (os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or "").strip()
-    if cookies_from_browser:
+    if cookies_from_browser and "cookiefile" not in opts:
         parts = [p.strip() for p in cookies_from_browser.split(":") if p.strip()]
         if parts:
             opts["cookiesfrombrowser"] = tuple(parts)
+
+    po_token = (os.environ.get("YTDLP_PO_TOKEN") or "").strip()
+    if po_token:
+        opts.setdefault("extractor_args", {}).setdefault("youtube", {})["po_token"] = [po_token]
+
+    visitor_data = (os.environ.get("YTDLP_VISITOR_DATA") or "").strip()
+    if visitor_data:
+        opts.setdefault("extractor_args", {}).setdefault("youtube", {})["visitor_data"] = [visitor_data]
 
     return opts
 
@@ -278,8 +488,27 @@ def _resolve_stream_from_yt_dlp(target, from_search=False):
         with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(target, download=False)
     except Exception as e:
-        logger.warning("yt-dlp extraction failed for %s: %s", target, e)
-        return {"success": False, "message": str(e)}
+        message = str(e)
+        logger.warning("yt-dlp extraction failed for %s: %s", target, message)
+
+        if _is_bot_challenge_message(message):
+            if _has_cookie_auth_config():
+                hint = (
+                    "YouTube bot challenge detected even with cookies configured. "
+                    "Refresh account cookies and ensure the account can play this video."
+                )
+            else:
+                hint = (
+                    "YouTube bot challenge detected. Configure one of "
+                    "YTDLP_COOKIEFILE, YTDLP_COOKIES_B64, or YTDLP_COOKIES_FROM_BROWSER."
+                )
+            return {
+                "success": False,
+                "message": "{} (raw: {})".format(hint, message),
+                "error_code": "bot_challenge",
+            }
+
+        return {"success": False, "message": message}
 
     if from_search:
         if not isinstance(info, dict):
@@ -344,13 +573,29 @@ def get_stream_url(video_id=""):
     if not resolved_id:
         return {"success": False, "message": "Invalid video_id"}
 
+    cached = _stream_cache_get(resolved_id)
+    if cached:
+        return {"success": True, "data": cached}
+
     target = "https://www.youtube.com/watch?v={}".format(resolved_id)
     result = _resolve_stream_from_yt_dlp(target, from_search=False)
     if result.get("success"):
         data = result.get("data") or {}
         if not data.get("video_id"):
             data["video_id"] = resolved_id
+        _stream_cache_set(resolved_id, data)
         result["data"] = data
+        return result
+
+    if result.get("error_code") == "bot_challenge":
+        stale = _stream_cache_get(resolved_id, allow_stale=True)
+        if stale:
+            return {
+                "success": True,
+                "data": stale,
+                "message": "Using stale cached stream URL due to temporary YouTube challenge",
+            }
+
     return result
 
 
@@ -570,15 +815,26 @@ def get_trending():
 
 
 def health_check():
+    configured_cookie_file = (os.environ.get("YTDLP_COOKIEFILE") or "").strip()
+    cookie_blob = _read_cookie_blob_from_env()
+    materialized_cookie_file = _materialize_cookiefile_from_env() if cookie_blob else None
+
     status = {
         "ytmusic": ytmusic is not None,
         "yt_dlp": YoutubeDL is not None,
         "search": False,
         "stream": YoutubeDL is not None,
-        "cookiefile_configured": bool((os.environ.get("YTDLP_COOKIEFILE") or "").strip()),
+        "cookiefile_configured": bool(configured_cookie_file),
+        "cookiefile_exists": bool(configured_cookie_file and os.path.exists(configured_cookie_file)),
         "cookies_from_browser_configured": bool(
             (os.environ.get("YTDLP_COOKIES_FROM_BROWSER") or "").strip()
         ),
+        "cookies_b64_configured": bool(cookie_blob),
+        "runtime_cookiefile_materialized": bool(materialized_cookie_file),
+        "po_token_configured": bool((os.environ.get("YTDLP_PO_TOKEN") or "").strip()),
+        "visitor_data_configured": bool((os.environ.get("YTDLP_VISITOR_DATA") or "").strip()),
+        "stream_cache_size": len(_STREAM_CACHE),
+        "stream_cache_ttl_seconds": _STREAM_CACHE_TTL_SECONDS,
     }
     if ytmusic:
         try:

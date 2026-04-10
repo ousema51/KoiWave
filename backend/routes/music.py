@@ -1,9 +1,22 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request, stream_with_context
+import requests
 import traceback
+from urllib.parse import quote
 
 from utils import youtube_music
 
 music_bp = Blueprint("music", __name__)
+
+
+_PROXY_RESPONSE_HEADER_WHITELIST = (
+    "Content-Type",
+    "Content-Length",
+    "Content-Range",
+    "Accept-Ranges",
+    "Cache-Control",
+    "ETag",
+    "Last-Modified",
+)
 
 
 def _normalize_stream_payload(payload, fallback_video_id=None):
@@ -60,6 +73,81 @@ def _normalize_stream_payload(payload, fallback_video_id=None):
         "duration": duration,
         "source": source or "yt-dlp",
     }
+
+
+def _build_stream_proxy_url(video_id):
+    if not video_id:
+        return None
+    return "{}/api/music/stream-proxy/{}".format(
+        request.host_url.rstrip("/"),
+        quote(str(video_id), safe=""),
+    )
+
+
+def _adapt_stream_payload_for_client(payload):
+    if not isinstance(payload, dict):
+        return payload
+
+    adapted = dict(payload)
+    video_id = adapted.get("video_id")
+    proxy_url = _build_stream_proxy_url(video_id)
+    if not proxy_url:
+        return adapted
+
+    adapted["upstream_audio_url"] = adapted.get("audio_url")
+    adapted["audio_url"] = proxy_url
+    adapted["proxy_url"] = proxy_url
+
+    # Browser audio pipelines cannot reliably attach custom headers; proxy handles them.
+    adapted["headers"] = {}
+    return adapted
+
+
+def _build_upstream_request_headers(stream_payload):
+    headers = {}
+    if isinstance(stream_payload, dict):
+        payload_headers = stream_payload.get("headers")
+        if isinstance(payload_headers, dict):
+            for key, value in payload_headers.items():
+                k = str(key).strip()
+                v = str(value).strip()
+                if k and v:
+                    headers[k] = v
+
+    # Keep range support for seeking/scrubbing.
+    for key in ("Range", "If-Range"):
+        value = request.headers.get(key)
+        if value:
+            headers[key] = value
+
+    return headers
+
+
+def _stream_upstream_response(upstream):
+    def generator():
+        try:
+            for chunk in upstream.iter_content(chunk_size=64 * 1024):
+                if chunk:
+                    yield chunk
+        finally:
+            upstream.close()
+
+    response_headers = {}
+    for header_name in _PROXY_RESPONSE_HEADER_WHITELIST:
+        header_value = upstream.headers.get(header_name)
+        if header_value:
+            response_headers[header_name] = header_value
+
+    response_headers["Access-Control-Allow-Origin"] = "*"
+    response_headers["Access-Control-Expose-Headers"] = (
+        "Content-Length, Content-Range, Accept-Ranges, Cache-Control"
+    )
+
+    return Response(
+        stream_with_context(generator()),
+        status=upstream.status_code,
+        headers=response_headers,
+    )
 
 
 @music_bp.route("/search", methods=["GET"])
@@ -139,7 +227,63 @@ def get_stream(video_id):
     if not normalized:
         return jsonify({"success": False, "message": "Invalid stream payload"}), 502
 
-    return jsonify({"success": True, "data": normalized}), 200
+    return jsonify({"success": True, "data": _adapt_stream_payload_for_client(normalized)}), 200
+
+
+@music_bp.route("/stream-proxy/<video_id>", methods=["GET", "OPTIONS"])
+def stream_proxy(video_id):
+    if request.method == "OPTIONS":
+        return (
+            "",
+            204,
+            {
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET, OPTIONS",
+                "Access-Control-Allow-Headers": "Range, If-Range, Content-Type, Authorization",
+            },
+        )
+
+    try:
+        result = youtube_music.get_stream_url(video_id)
+    except Exception as e:
+        print("[stream-proxy] exception while resolving stream:", flush=True)
+        traceback.print_exc()
+        return jsonify({"success": False, "message": str(e)}), 500
+
+    if not isinstance(result, dict):
+        return jsonify({"success": False, "message": "Invalid stream resolver response"}), 502
+
+    if result.get("success") is False:
+        return jsonify({"success": False, "message": result.get("message", "Stream resolution failed")}), 502
+
+    normalized = _normalize_stream_payload(result.get("data", result), fallback_video_id=video_id)
+    if not normalized:
+        return jsonify({"success": False, "message": "Invalid stream payload"}), 502
+
+    upstream_url = normalized.get("audio_url")
+    if not upstream_url:
+        return jsonify({"success": False, "message": "Missing upstream audio URL"}), 502
+
+    request_headers = _build_upstream_request_headers(normalized)
+
+    try:
+        upstream = requests.get(
+            upstream_url,
+            headers=request_headers,
+            stream=True,
+            timeout=(10, 60),
+        )
+    except Exception as e:
+        print("[stream-proxy] upstream request failed:", flush=True)
+        traceback.print_exc()
+        return jsonify({"success": False, "message": "Upstream stream fetch failed: {}".format(str(e))}), 502
+
+    if upstream.status_code >= 400:
+        status = upstream.status_code
+        upstream.close()
+        return jsonify({"success": False, "message": "Upstream stream fetch failed with status {}".format(status)}), 502
+
+    return _stream_upstream_response(upstream)
 
 
 @music_bp.route("/stream", methods=["GET"])
@@ -165,7 +309,7 @@ def get_stream_from_query():
     if not normalized:
         return jsonify({"success": False, "message": "Invalid stream payload"}), 502
 
-    return jsonify({"success": True, "data": normalized}), 200
+    return jsonify({"success": True, "data": _adapt_stream_payload_for_client(normalized)}), 200
 
 
 @music_bp.route("/album/<album_id>", methods=["GET"])
