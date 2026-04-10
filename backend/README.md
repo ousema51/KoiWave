@@ -63,6 +63,7 @@ cp .env.example .env
 | `JWT_SECRET`        | Secret key used to sign JWT tokens (keep this secret!)   |
 | `SPOTIFY_CLIENT_ID` | Spotify app client ID (used for playlist import OAuth)   |
 | `SPOTIFY_CLIENT_SECRET` | Spotify app client secret (used for playlist import OAuth) |
+| `SPOTIFY_DEFAULT_MARKET` | Optional 2-letter market code for playlist item availability (default `US`) |
 | `YTDLP_COOKIEFILE`  | Absolute path to Netscape-format YouTube cookies file    |
 | `YTDLP_COOKIES_B64` | Base64 string of Netscape-format YouTube cookies file    |
 | `YTDLP_COOKIES_FROM_BROWSER` | Browser cookie source for yt-dlp (`chrome:Default`, etc.) |

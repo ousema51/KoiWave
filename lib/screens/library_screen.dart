@@ -306,14 +306,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
         );
       } else {
         final retryAfter = result['retry_after'];
+        final detail = (result['detail'] ?? '').toString().trim();
         final retryHint = _toInt(retryAfter) > 0
             ? ' Try again in ${_toInt(retryAfter)}s.'
             : '';
+        final errorBase = message.isNotEmpty
+            ? message
+            : 'Could not import playlist from Spotify.';
+        final detailHint = detail.isNotEmpty ? ' ($detail)' : '';
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              '${message.isNotEmpty ? message : 'Could not import playlist from Spotify.'}$retryHint',
+              '$errorBase$detailHint$retryHint',
             ),
             backgroundColor: Colors.red[700],
           ),

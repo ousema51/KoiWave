@@ -51,6 +51,11 @@ def _has_spotify_app_credentials():
     return bool(client_id and client_secret)
 
 
+def _spotify_default_market():
+    raw = (os.environ.get("SPOTIFY_DEFAULT_MARKET") or "US").strip().upper()
+    return raw if re.match(r"^[A-Z]{2}$", raw) else None
+
+
 def _token_is_fresh():
     token = _TOKEN_CACHE.get("access_token")
     expires_at = float(_TOKEN_CACHE.get("expires_at") or 0)
@@ -209,10 +214,25 @@ def spotify_get(path_or_url, access_token=None, params=None, allow_refresh=True)
         }
 
     if response.status_code == 403:
+        raw_message = _error_message_from_response(response)
+        normalized = raw_message.lower()
+
+        if "insufficient client scope" in normalized or "insufficient scope" in normalized:
+            return {
+                "success": False,
+                "error_code": "spotify_insufficient_scope",
+                "message": (
+                    "Spotify denied this request because the app token has insufficient scope "
+                    "for this playlist. Some public playlists include restricted item types."
+                ),
+                "status_code": 403,
+                "detail": raw_message,
+            }
+
         return {
             "success": False,
             "error_code": "spotify_forbidden",
-            "message": "Spotify denied access to this playlist. It may be private.",
+            "message": "Spotify denied access to this playlist: {}".format(raw_message),
             "status_code": 403,
         }
 
@@ -245,13 +265,34 @@ def fetch_playlist_with_tracks(playlist_id, access_token=None):
             "message": "Spotify playlist ID is required.",
         }
 
+    market = _spotify_default_market()
+
+    metadata_params = {
+        "fields": "id,name,description,public,external_urls,owner(display_name,id),images,tracks(total)",
+    }
+    if market:
+        metadata_params["market"] = market
+
     metadata_result = spotify_get(
         "/playlists/{}".format(playlist_id),
         access_token=access_token,
-        params={
-            "fields": "id,name,description,public,external_urls,owner(display_name,id),images,tracks(total)",
-        },
+        params=metadata_params,
     )
+
+    # Some public playlists can reject strict field projections with app tokens.
+    if not metadata_result.get("success") and metadata_result.get("error_code") in (
+        "spotify_forbidden",
+        "spotify_insufficient_scope",
+    ):
+        fallback_metadata_params = {}
+        if market:
+            fallback_metadata_params["market"] = market
+        metadata_result = spotify_get(
+            "/playlists/{}".format(playlist_id),
+            access_token=access_token,
+            params=fallback_metadata_params or None,
+        )
+
     if not metadata_result.get("success"):
         return metadata_result
 
@@ -262,16 +303,37 @@ def fetch_playlist_with_tracks(playlist_id, access_token=None):
     page_limit = 100
     partial_warning = None
 
+    def _build_track_params(compact=False):
+        params = {
+            "limit": page_limit,
+            "offset": offset,
+            "additional_types": "track",
+        }
+        if market:
+            params["market"] = market
+        if not compact:
+            params["fields"] = (
+                "items(track(id,name,artists(name),duration_ms,external_urls,is_local,is_playable,album(name,images))),next,total"
+            )
+        return params
+
     while True:
         page_result = spotify_get(
             "/playlists/{}/tracks".format(playlist_id),
             access_token=access_token,
-            params={
-                "limit": page_limit,
-                "offset": offset,
-                "fields": "items(track(id,name,artists(name),duration_ms,external_urls,is_local,is_playable,album(name,images))),next,total",
-            },
+            params=_build_track_params(compact=False),
         )
+
+        # Retry with a minimal shape when strict projection is forbidden.
+        if not page_result.get("success") and page_result.get("error_code") in (
+            "spotify_forbidden",
+            "spotify_insufficient_scope",
+        ):
+            page_result = spotify_get(
+                "/playlists/{}/tracks".format(playlist_id),
+                access_token=access_token,
+                params=_build_track_params(compact=True),
+            )
 
         if not page_result.get("success"):
             if all_tracks:

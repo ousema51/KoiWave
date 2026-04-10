@@ -36,7 +36,7 @@ def _spotify_error_http_status(error_code):
         return 429
     if error_code in ("spotify_not_found_or_private", "invalid_playlist_id"):
         return 404
-    if error_code == "spotify_forbidden":
+    if error_code in ("spotify_forbidden", "spotify_insufficient_scope"):
         return 403
     if error_code == "spotify_oauth_not_configured":
         return 500
@@ -167,6 +167,9 @@ def import_spotify_playlist():
             "message": fetched.get("message") or "Failed to fetch Spotify playlist",
             "error_code": error_code,
         }
+        detail = fetched.get("detail")
+        if detail:
+            payload["detail"] = detail
         retry_after = fetched.get("retry_after")
         if retry_after:
             payload["retry_after"] = retry_after
