@@ -248,7 +248,7 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         self.assertTrue(result["success"])
         mocked_get_stream.assert_called_once_with("GwrLUr01NOY")
 
-    def test_resolve_stream_from_external_api_download_post_flow(self):
+    def test_resolve_stream_from_external_api_post_id_flow(self):
         class FakeResponse:
             def __init__(self, status_code, payload):
                 self.status_code = status_code
@@ -259,16 +259,12 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
                 return self._payload
 
         post_payload = {
-            "id": "req-123",
-            "downloadUrl": "https://cdn.example.com/audio.mp3",
-            "status": "CONVERTING",
-            "format": "MP3",
-        }
-        poll_payload = {
-            "id": "req-123",
-            "downloadUrl": "https://cdn.example.com/audio.mp3",
-            "status": "COMPLETED",
-            "format": "MP3",
+            "videoId": "GwrLUr01NOY",
+            "title": "Demo Song",
+            "lengthSeconds": "180",
+            "linkStream": "https://cdn.example.com/audio.m4a",
+            "linkDownload": "https://cdn.example.com/audio-download.m4a",
+            "error": False,
         }
 
         with patch.dict(
@@ -276,30 +272,25 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
             {
                 "YTDLP_PROVIDER": "rapidapi",
                 "YTDLP_RAPIDAPI_KEY": "key",
-                "YTDLP_RAPIDAPI_HOST": "youtube-to-mp315.p.rapidapi.com",
-                "YTDLP_RAPIDAPI_URL": "https://youtube-to-mp315.p.rapidapi.com/download",
-                "YTDLP_RAPIDAPI_STATUS_POLL_ATTEMPTS": "1",
+                "YTDLP_RAPIDAPI_HOST": "youtube-mp3-2025.p.rapidapi.com",
+                "YTDLP_RAPIDAPI_URL": "https://youtube-mp3-2025.p.rapidapi.com/v1/social/youtube/audio",
             },
             clear=False,
         ):
             with patch.object(youtube_music.requests, "post", return_value=FakeResponse(200, post_payload)) as mocked_post:
-                with patch.object(youtube_music.requests, "get", return_value=FakeResponse(200, poll_payload)) as mocked_get:
-                    result = youtube_music._resolve_stream_from_external_api("GwrLUr01NOY")
+                result = youtube_music._resolve_stream_from_external_api("GwrLUr01NOY")
 
         self.assertTrue(result["success"])
-        self.assertEqual(result["data"]["audio_url"], "https://cdn.example.com/audio.mp3")
+        self.assertEqual(result["data"]["audio_url"], "https://cdn.example.com/audio.m4a")
         self.assertEqual(result["data"]["external_method"], "POST")
+        self.assertEqual(result["data"]["title"], "Demo Song")
+        self.assertEqual(result["data"]["duration"], 180)
 
         _, kwargs = mocked_post.call_args
-        self.assertIn("youtube.com/watch?v=GwrLUr01NOY", kwargs.get("params", {}).get("url", ""))
-        self.assertEqual(kwargs.get("json", {}).get("format"), "mp3")
-        self.assertEqual(kwargs.get("json", {}).get("quality"), 0)
+        self.assertEqual(kwargs.get("json", {}).get("id"), "GwrLUr01NOY")
+        self.assertIsNone(kwargs.get("params"))
 
-        self.assertTrue(mocked_get.called)
-        status_url = mocked_get.call_args[0][0]
-        self.assertIn("/status/req-123", status_url)
-
-    def test_resolve_stream_from_external_api_download_mp3_get_flow(self):
+    def test_resolve_stream_from_external_api_provider_error_payload(self):
         class FakeResponse:
             def __init__(self, status_code, payload):
                 self.status_code = status_code
@@ -310,9 +301,11 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
                 return self._payload
 
         payload = {
-            "comment": "The file will soon be ready",
-            "file": "https://cdn.example.com/out.mp3",
-            "reserved_file": "https://cdn.example.com/reserved-out.mp3",
+            "error": True,
+            "message": {
+                "status": 400,
+                "body": "Bad id",
+            },
         }
 
         with patch.dict(
@@ -320,24 +313,17 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
             {
                 "YTDLP_PROVIDER": "rapidapi",
                 "YTDLP_RAPIDAPI_KEY": "key",
-                "YTDLP_RAPIDAPI_HOST": "youtube-mp310.p.rapidapi.com",
-                "YTDLP_RAPIDAPI_URL": "https://youtube-mp310.p.rapidapi.com/download/mp3",
+                "YTDLP_RAPIDAPI_HOST": "youtube-mp3-2025.p.rapidapi.com",
+                "YTDLP_RAPIDAPI_URL": "https://youtube-mp3-2025.p.rapidapi.com/v1/social/youtube/audio",
             },
             clear=False,
         ):
-            with patch.object(youtube_music.requests, "get", return_value=FakeResponse(200, payload)) as mocked_get:
+            with patch.object(youtube_music.requests, "post", return_value=FakeResponse(200, payload)):
                 result = youtube_music._resolve_stream_from_external_api("https://www.youtube.com/watch?v=Ckom3gf57Yw")
 
-        self.assertTrue(result["success"])
-        self.assertEqual(result["data"]["audio_url"], "https://cdn.example.com/out.mp3")
-        self.assertEqual(result["data"]["external_method"], "GET")
-
-        called_url = mocked_get.call_args[0][0]
-        self.assertIn("/download/mp3", called_url)
-
-        called_params = mocked_get.call_args[1].get("params", {})
-        self.assertEqual(set(called_params.keys()), {"url"})
-        self.assertIn("youtube.com/watch?v=Ckom3gf57Yw", called_params.get("url", ""))
+        self.assertFalse(result["success"])
+        self.assertEqual(result.get("error_code"), "external_provider_error")
+        self.assertIn("Bad id", result.get("message", ""))
 
 
 if __name__ == "__main__":
