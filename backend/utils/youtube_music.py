@@ -509,13 +509,13 @@ def _get_rapidapi_key():
 
 
 def _get_rapidapi_host():
-    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "youtube-mp3-audio-video-downloader.p.rapidapi.com").strip()
+    return (os.environ.get("YTDLP_RAPIDAPI_HOST") or "youtube-info-download-api.p.rapidapi.com").strip()
 
 
 def _get_rapidapi_url():
     return (
         os.environ.get("YTDLP_RAPIDAPI_URL")
-        or "https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{id}?quality=low&wait_until_the_file_is_ready=true"
+        or "https://youtube-info-download-api.p.rapidapi.com/ajax/download.php"
     ).strip()
 
 
@@ -845,7 +845,7 @@ def _resolve_stream_from_external_api(video_id):
         "content-type": "application/json",
     }
 
-    default_timeout = 60 if "youtube-mp3-audio-video-downloader" in host else 20
+    default_timeout = 60 if ("youtube-mp3-audio-video-downloader" in host or "youtube-info-download-api" in host) else 20
     timeout_seconds = max(8, _get_int_env("YTDLP_EXTERNAL_TIMEOUT_SECONDS", default_timeout))
 
     last_error = None
@@ -867,7 +867,25 @@ def _resolve_stream_from_external_api(video_id):
         else:
             params = {"url": target_url}
 
-        if "/download" in endpoint_value.lower():
+        lower_endpoint = endpoint_value.lower()
+        is_ajax_download_php = "/ajax/download.php" in lower_endpoint or "/download.php" in lower_endpoint
+
+        if is_ajax_download_php:
+            params = dict(params or {})
+            params["url"] = target_url
+            params["format"] = (os.environ.get("YTDLP_RAPIDAPI_FORMAT") or "mp3").strip() or "mp3"
+            params["add_info"] = (os.environ.get("YTDLP_RAPIDAPI_ADD_INFO") or "0").strip() or "0"
+            params["audio_quality"] = (
+                (os.environ.get("YTDLP_RAPIDAPI_AUDIO_QUALITY") or "").strip()
+                or (os.environ.get("YTDLP_RAPIDAPI_QUALITY") or "").strip()
+                or "128"
+            )
+            params["allow_extended_duration"] = (
+                (os.environ.get("YTDLP_RAPIDAPI_ALLOW_EXTENDED_DURATION") or "false").strip() or "false"
+            )
+            params["no_merge"] = (os.environ.get("YTDLP_RAPIDAPI_NO_MERGE") or "false").strip() or "false"
+            params["audio_language"] = (os.environ.get("YTDLP_RAPIDAPI_AUDIO_LANGUAGE") or "en").strip() or "en"
+        elif "/download" in lower_endpoint:
             method = "POST"
             params = dict(params or {"url": target_url})
             body = {

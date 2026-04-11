@@ -233,7 +233,7 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         status_url = mocked_get.call_args[0][0]
         self.assertIn("/status/req-123", status_url)
 
-    def test_resolve_stream_from_external_api_get_mp3_download_link_flow(self):
+    def test_resolve_stream_from_external_api_ajax_download_php_flow(self):
         class FakeResponse:
             def __init__(self, status_code, payload):
                 self.status_code = status_code
@@ -254,8 +254,8 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
             {
                 "YTDLP_PROVIDER": "rapidapi",
                 "YTDLP_RAPIDAPI_KEY": "key",
-                "YTDLP_RAPIDAPI_HOST": "youtube-mp3-audio-video-downloader.p.rapidapi.com",
-                "YTDLP_RAPIDAPI_URL": "https://youtube-mp3-audio-video-downloader.p.rapidapi.com/get_mp3_download_link/{id}?quality=low&wait_until_the_file_is_ready=false",
+                "YTDLP_RAPIDAPI_HOST": "youtube-info-download-api.p.rapidapi.com",
+                "YTDLP_RAPIDAPI_URL": "https://youtube-info-download-api.p.rapidapi.com/ajax/download.php",
             },
             clear=False,
         ):
@@ -267,8 +267,16 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         self.assertEqual(result["data"]["external_method"], "GET")
 
         called_url = mocked_get.call_args[0][0]
-        self.assertIn("/get_mp3_download_link/Ckom3gf57Yw", called_url)
-        self.assertIn("quality=low", called_url)
+        self.assertIn("/ajax/download.php", called_url)
+
+        called_params = mocked_get.call_args[1].get("params", {})
+        self.assertEqual(called_params.get("format"), "mp3")
+        self.assertEqual(called_params.get("add_info"), "0")
+        self.assertEqual(called_params.get("audio_quality"), "128")
+        self.assertEqual(called_params.get("allow_extended_duration"), "false")
+        self.assertEqual(called_params.get("no_merge"), "false")
+        self.assertEqual(called_params.get("audio_language"), "en")
+        self.assertIn("youtube.com/watch?v=Ckom3gf57Yw", called_params.get("url", ""))
 
 
 if __name__ == "__main__":
