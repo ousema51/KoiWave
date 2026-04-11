@@ -68,6 +68,7 @@ cp .env.example .env
 | `YTDLP_VISITOR_DATA`| Optional YouTube visitor data used with `YTDLP_PO_TOKEN` |
 | `YTDLP_PROVIDER`    | Set to `rapidapi` to prefer external yt-dlp API          |
 | `YTDLP_RAPIDAPI_KEY`| RapidAPI key for external yt-dlp API                     |
+| `YTDLP_RAPIDAPI_KEYS`| Optional comma-separated RapidAPI keys used as automatic quota failover chain |
 | `YTDLP_RAPIDAPI_HOST`| RapidAPI host (default `youtube-mp3-2025.p.rapidapi.com`)    |
 | `YTDLP_RAPIDAPI_URL`| RapidAPI endpoint URL (default `https://youtube-mp3-2025.p.rapidapi.com/v1/social/youtube/audio`) |
 | `YTDLP_EXTERNAL_TIMEOUT_SECONDS`| External API timeout in seconds (default `60` for this provider) |
@@ -83,6 +84,8 @@ The backend also auto-converts raw `Cookie:` header strings into Netscape cookie
 If yt-dlp still fails (for example YouTube bot challenge), backend automatically falls back to Piped stream resolution. You can override instances via `PIPED_INSTANCES` (comma-separated URLs).
 
 When `YTDLP_PROVIDER=rapidapi` (or `YTDLP_RAPIDAPI_KEY` is set), backend resolves streams using only the external provider endpoint. By default it calls `POST /v1/social/youtube/audio` on `youtube-mp3-2025.p.rapidapi.com` with JSON body `{"id":"<youtube_video_id>"}`.
+
+If a key reaches monthly quota, backend automatically retries with the next key from `YTDLP_RAPIDAPI_KEYS` (or embedded backup keys when embedded keys are enabled).
 
 If a provider returns a session-bound intermediate URL (for example links that fail with `Invalid Session` when fetched by backend proxy), backend automatically falls back to Piped stream resolution and then local yt-dlp extraction when available.
 

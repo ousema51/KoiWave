@@ -87,7 +87,11 @@ _DEFAULT_PIPED_INSTANCES = (
     "https://api.piped.yt",
 )
 
-_EMBEDDED_RAPIDAPI_KEY = "f0bc78dd8bmsh5c53b913e3193c2p1ccb81jsn9cd314a6bcce"
+_EMBEDDED_RAPIDAPI_KEYS = (
+    "f0bc78dd8bmsh5c53b913e3193c2p1ccb81jsn9cd314a6bcce",
+    "2d8cf9ee07msh109bfb3f630c5d7p14ffdcjsnb682cf33f6cb",
+    "3bd6b57c15mshbefa535a04162d1p1bc5f7jsn74bef6a4cf14",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +487,30 @@ def _load_piped_instances():
     return [v.rstrip("/") for v in _DEFAULT_PIPED_INSTANCES]
 
 
-def _get_rapidapi_key():
+def _split_delimited_values(raw):
+    text = (_safe_str(raw) or "").strip()
+    if not text:
+        return []
+
+    values = text.replace("\n", ",").replace(";", ",").split(",")
+    return [v.strip() for v in values if v and v.strip()]
+
+
+def _dedupe_preserve_order(values):
+    unique = []
+    seen = set()
+
+    for value in values:
+        entry = (_safe_str(value) or "").strip()
+        if not entry or entry in seen:
+            continue
+        seen.add(entry)
+        unique.append(entry)
+
+    return unique
+
+
+def _get_rapidapi_keys():
     disable_embedded = (os.environ.get("YTDLP_DISABLE_EMBEDDED_RAPIDAPI_KEY") or "").strip().lower() in (
         "1",
         "true",
@@ -491,21 +518,80 @@ def _get_rapidapi_key():
         "on",
     )
 
-    env_key = (
-        (os.environ.get("YTDLP_RAPIDAPI_KEY") or "").strip()
-        or (os.environ.get("RAPIDAPI_KEY") or "").strip()
-        or (os.environ.get("X_RAPIDAPI_KEY") or "").strip()
-    )
+    env_keys = []
+    env_keys.extend(_split_delimited_values(os.environ.get("YTDLP_RAPIDAPI_KEYS")))
+    env_keys.extend(_split_delimited_values(os.environ.get("RAPIDAPI_KEYS")))
+    env_keys.extend(_split_delimited_values(os.environ.get("X_RAPIDAPI_KEYS")))
 
-    if env_key:
-        return env_key
+    for key_name in ("YTDLP_RAPIDAPI_KEY", "RAPIDAPI_KEY", "X_RAPIDAPI_KEY"):
+        env_value = (os.environ.get(key_name) or "").strip()
+        if env_value:
+            env_keys.append(env_value)
+
+    env_keys = _dedupe_preserve_order(env_keys)
+
+    if env_keys:
+        return env_keys
 
     if disable_embedded:
-        return ""
+        return []
 
-    return (
-        _EMBEDDED_RAPIDAPI_KEY
+    return _dedupe_preserve_order(_EMBEDDED_RAPIDAPI_KEYS)
+
+
+def _get_rapidapi_key():
+    keys = _get_rapidapi_keys()
+    if keys:
+        return keys[0]
+    return ""
+
+
+def _looks_like_quota_message(message):
+    text = (_safe_str(message) or "").strip().lower()
+    if not text:
+        return False
+
+    markers = (
+        "quota",
+        "monthly",
+        "too many requests",
+        "rate limit",
+        "rate-limit",
+        "requests limit",
+        "limit exceeded",
+        "exceeded",
     )
+    return any(marker in text for marker in markers)
+
+
+def _is_quota_exhausted_response(status_code, body_text, response_headers):
+    if status_code == 429:
+        return True
+
+    if _looks_like_quota_message(body_text):
+        return True
+
+    if not isinstance(response_headers, dict):
+        return False
+
+    remaining_headers = (
+        "X-RateLimit-Requests-Remaining",
+        "x-ratelimit-requests-remaining",
+        "X-RateLimit-rapid-free-plans-hard-limit-Remaining",
+        "x-ratelimit-rapid-free-plans-hard-limit-remaining",
+    )
+
+    for header_name in remaining_headers:
+        value = response_headers.get(header_name)
+        if value is None:
+            continue
+        try:
+            if int(str(value).strip()) <= 0:
+                return True
+        except Exception:
+            continue
+
+    return False
 
 
 def _get_rapidapi_host():
@@ -632,8 +718,8 @@ def _resolve_stream_from_external_api(video_id):
     if not _external_ytdlp_api_enabled():
         return {"success": False, "error_code": "external_disabled", "message": "External yt-dlp API disabled"}
 
-    api_key = _get_rapidapi_key()
-    if not api_key:
+    api_keys = _get_rapidapi_keys()
+    if not api_keys:
         return {"success": False, "error_code": "external_missing_key", "message": "Missing RapidAPI key"}
 
     resolved_id = _extract_video_id(video_id)
@@ -643,101 +729,135 @@ def _resolve_stream_from_external_api(video_id):
     endpoint_value = _get_rapidapi_url()
     host = _get_rapidapi_host()
 
-    headers = {
-        "x-rapidapi-key": api_key,
-        "x-rapidapi-host": host,
-        "accept": "application/json",
-        "content-type": "application/json",
-    }
-
     timeout_seconds = max(8, _get_int_env("YTDLP_EXTERNAL_TIMEOUT_SECONDS", 60))
 
     request_body = {"id": resolved_id}
 
-    try:
-        response = requests.post(
-            endpoint_value,
-            json=request_body,
-            headers=headers,
-            timeout=(8, timeout_seconds),
-        )
-    except Exception as e:
-        return {
-            "success": False,
-            "error_code": "external_request_failed",
-            "message": "RapidAPI yt-dlp POST request failed: {}".format(str(e)),
+    last_quota_error = None
+    for api_key in api_keys:
+        headers = {
+            "x-rapidapi-key": api_key,
+            "x-rapidapi-host": host,
+            "accept": "application/json",
+            "content-type": "application/json",
         }
 
-    if response.status_code == 404:
-        return {
-            "success": False,
-            "error_code": "external_http_404",
-            "message": "RapidAPI yt-dlp endpoint {} returned 404".format(endpoint_value),
-        }
-
-    if response.status_code >= 400:
-        body = response.text[:220] if response.text else ""
-        return {
-            "success": False,
-            "error_code": "external_http_error",
-            "message": "RapidAPI yt-dlp POST returned status {} at {}: {}".format(
-                response.status_code,
+        try:
+            response = requests.post(
                 endpoint_value,
-                body,
-            ),
+                json=request_body,
+                headers=headers,
+                timeout=(8, timeout_seconds),
+            )
+        except Exception as e:
+            return {
+                "success": False,
+                "error_code": "external_request_failed",
+                "message": "RapidAPI yt-dlp POST request failed: {}".format(str(e)),
+            }
+
+        response_headers = getattr(response, "headers", {})
+
+        if response.status_code == 404:
+            return {
+                "success": False,
+                "error_code": "external_http_404",
+                "message": "RapidAPI yt-dlp endpoint {} returned 404".format(endpoint_value),
+            }
+
+        if response.status_code >= 400:
+            body = response.text[:220] if response.text else ""
+            if _is_quota_exhausted_response(response.status_code, body, response_headers):
+                last_quota_error = {
+                    "success": False,
+                    "error_code": "external_quota_exhausted",
+                    "message": "RapidAPI quota exhausted for one key, trying backup key",
+                }
+                continue
+
+            return {
+                "success": False,
+                "error_code": "external_http_error",
+                "message": "RapidAPI yt-dlp POST returned status {} at {}: {}".format(
+                    response.status_code,
+                    endpoint_value,
+                    body,
+                ),
+            }
+
+        try:
+            payload = response.json()
+        except Exception as e:
+            return {
+                "success": False,
+                "error_code": "external_invalid_json",
+                "message": "RapidAPI yt-dlp returned invalid JSON from {}: {}".format(endpoint_value, str(e)),
+            }
+
+        if not isinstance(payload, dict):
+            return {
+                "success": False,
+                "error_code": "external_invalid_json",
+                "message": "RapidAPI yt-dlp returned unexpected payload type",
+            }
+
+        provider_error = payload.get("error")
+        if isinstance(provider_error, bool) and provider_error:
+            provider_message = payload.get("message")
+            if isinstance(provider_message, dict):
+                provider_message = provider_message.get("body") or provider_message.get("message") or str(provider_message)
+
+            if _is_quota_exhausted_response(response.status_code, provider_message, response_headers):
+                last_quota_error = {
+                    "success": False,
+                    "error_code": "external_quota_exhausted",
+                    "message": "RapidAPI quota exhausted for one key, trying backup key",
+                }
+                continue
+
+            return {
+                "success": False,
+                "error_code": "external_provider_error",
+                "message": "RapidAPI provider error: {}".format(_safe_str(provider_message) or "unknown error"),
+            }
+
+        audio_url = _extract_audio_url_from_external_payload(payload)
+
+        if not audio_url:
+            return {
+                "success": False,
+                "error_code": "external_no_audio_url",
+                "message": "RapidAPI yt-dlp response did not include a usable audio URL",
+            }
+
+        title = _safe_str(payload.get("title") or payload.get("name"))
+        duration = _safe_int(payload.get("lengthSeconds") or payload.get("duration"))
+
+        return {
+            "success": True,
+            "data": {
+                "audio_url": audio_url,
+                "headers": _merged_stream_headers(),
+                "video_id": resolved_id,
+                "title": title,
+                "duration": duration,
+                "source": "rapidapi-yt-dlp",
+                "external_endpoint": endpoint_value,
+                "external_method": "POST",
+            },
         }
 
-    try:
-        payload = response.json()
-    except Exception as e:
+    if last_quota_error:
         return {
             "success": False,
-            "error_code": "external_invalid_json",
-            "message": "RapidAPI yt-dlp returned invalid JSON from {}: {}".format(endpoint_value, str(e)),
+            "error_code": "external_quota_exhausted",
+            "message": "RapidAPI quota exhausted for all configured keys",
         }
-
-    if not isinstance(payload, dict):
-        return {
-            "success": False,
-            "error_code": "external_invalid_json",
-            "message": "RapidAPI yt-dlp returned unexpected payload type",
-        }
-
-    provider_error = payload.get("error")
-    if isinstance(provider_error, bool) and provider_error:
-        provider_message = payload.get("message")
-        if isinstance(provider_message, dict):
-            provider_message = provider_message.get("body") or provider_message.get("message") or str(provider_message)
-        return {
-            "success": False,
-            "error_code": "external_provider_error",
-            "message": "RapidAPI provider error: {}".format(_safe_str(provider_message) or "unknown error"),
-        }
-
-    audio_url = _extract_audio_url_from_external_payload(payload)
-
-    if not audio_url:
-        return {
-            "success": False,
-            "error_code": "external_no_audio_url",
-            "message": "RapidAPI yt-dlp response did not include a usable audio URL",
-        }
-
-    title = _safe_str(payload.get("title") or payload.get("name"))
-    duration = _safe_int(payload.get("lengthSeconds") or payload.get("duration"))
 
     return {
-        "success": True,
-        "data": {
-            "audio_url": audio_url,
-            "headers": _merged_stream_headers(),
-            "video_id": resolved_id,
-            "title": title,
-            "duration": duration,
-            "source": "rapidapi-yt-dlp",
-            "external_endpoint": endpoint_value,
-            "external_method": "POST",
-        },
+        "success": False,
+        "error_code": "external_request_failed",
+        "message": "RapidAPI yt-dlp request failed",
     }
 
 

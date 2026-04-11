@@ -325,6 +325,99 @@ class YoutubeMusicFallbackTests(unittest.TestCase):
         self.assertEqual(result.get("error_code"), "external_provider_error")
         self.assertIn("Bad id", result.get("message", ""))
 
+    def test_resolve_stream_from_external_api_uses_backup_key_on_quota_limit(self):
+        class FakeResponse:
+            def __init__(self, status_code, payload, headers=None):
+                self.status_code = status_code
+                self._payload = payload
+                self.text = str(payload)
+                self.headers = headers or {}
+
+            def json(self):
+                return self._payload
+
+        quota_payload = {
+            "error": True,
+            "message": {
+                "status": 429,
+                "body": "You have exceeded the MONTHLY quota",
+            },
+        }
+        success_payload = {
+            "videoId": "GwrLUr01NOY",
+            "title": "Recovered Song",
+            "lengthSeconds": "181",
+            "linkStream": "https://cdn.example.com/recovered.m4a",
+            "error": False,
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "YTDLP_PROVIDER": "rapidapi",
+                "YTDLP_RAPIDAPI_KEYS": "first-key,second-key",
+                "YTDLP_DISABLE_EMBEDDED_RAPIDAPI_KEY": "1",
+            },
+            clear=False,
+        ):
+            with patch.object(
+                youtube_music.requests,
+                "post",
+                side_effect=[
+                    FakeResponse(429, quota_payload, {"X-RateLimit-Requests-Remaining": "0"}),
+                    FakeResponse(200, success_payload),
+                ],
+            ) as mocked_post:
+                result = youtube_music._resolve_stream_from_external_api("GwrLUr01NOY")
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["data"]["audio_url"], "https://cdn.example.com/recovered.m4a")
+        self.assertEqual(mocked_post.call_count, 2)
+        self.assertEqual(mocked_post.call_args_list[0].kwargs["headers"]["x-rapidapi-key"], "first-key")
+        self.assertEqual(mocked_post.call_args_list[1].kwargs["headers"]["x-rapidapi-key"], "second-key")
+
+    def test_resolve_stream_from_external_api_returns_quota_exhausted_when_all_keys_limited(self):
+        class FakeResponse:
+            def __init__(self, status_code, payload, headers=None):
+                self.status_code = status_code
+                self._payload = payload
+                self.text = str(payload)
+                self.headers = headers or {}
+
+            def json(self):
+                return self._payload
+
+        quota_payload = {
+            "error": True,
+            "message": {
+                "status": 429,
+                "body": "You have exceeded the MONTHLY quota",
+            },
+        }
+
+        with patch.dict(
+            os.environ,
+            {
+                "YTDLP_PROVIDER": "rapidapi",
+                "YTDLP_RAPIDAPI_KEYS": "first-key,second-key",
+                "YTDLP_DISABLE_EMBEDDED_RAPIDAPI_KEY": "1",
+            },
+            clear=False,
+        ):
+            with patch.object(
+                youtube_music.requests,
+                "post",
+                side_effect=[
+                    FakeResponse(429, quota_payload, {"X-RateLimit-Requests-Remaining": "0"}),
+                    FakeResponse(429, quota_payload, {"X-RateLimit-Requests-Remaining": "0"}),
+                ],
+            ) as mocked_post:
+                result = youtube_music._resolve_stream_from_external_api("GwrLUr01NOY")
+
+        self.assertFalse(result["success"])
+        self.assertEqual(result.get("error_code"), "external_quota_exhausted")
+        self.assertEqual(mocked_post.call_count, 2)
+
 
 if __name__ == "__main__":
     unittest.main()
